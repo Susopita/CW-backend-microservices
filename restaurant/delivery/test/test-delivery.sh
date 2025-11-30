@@ -51,6 +51,7 @@ get_event_bus_name() {
 publish_event() {
   local detail_type=$1
   local event_payload=$2
+  local source="${3:-payment.service}"
   
   echo -e "${YELLOW}Publicando evento: ${detail_type}${NC}"
   
@@ -61,7 +62,7 @@ publish_event() {
   local entries=$(cat <<EOF
 [
   {
-    "Source": "payment.service",
+    "Source": "${source}",
     "DetailType": "${detail_type}",
     "Detail": ${event_payload},
     "EventBusName": "${EVENT_BUS}"
@@ -174,7 +175,7 @@ EVENTO_PAGO=$(cat <<EOF
 EOF
 )
 
-publish_event "PagoConfirmado" "$EVENTO_PAGO"
+publish_event "PagoConfirmado" "$EVENTO_PAGO" "payment.service"
 
 sleep 1
 
@@ -195,7 +196,7 @@ EVENTO_COMIDA=$(cat <<EOF
 EOF
 )
 
-publish_event "ComidaPreparada" "$EVENTO_COMIDA"
+publish_event "ComidaPreparada" "$EVENTO_COMIDA" "kitchen.service"
 
 sleep 1
 
@@ -216,7 +217,7 @@ EVENTO_DESPACHO=$(cat <<EOF
 EOF
 )
 
-publish_event "Despachado" "$EVENTO_DESPACHO"
+publish_event "Despachado" "$EVENTO_DESPACHO" "packing.service"
 
 sleep 1
 
@@ -238,7 +239,7 @@ EVENTO_ENTREGA=$(cat <<EOF
 EOF
 )
 
-publish_event "Entregado" "$EVENTO_ENTREGA"
+publish_event "Entregado" "$EVENTO_ENTREGA" "driver.service"
 
 # =========================================================================
 # RESUMEN Y VERIFICACIÓN

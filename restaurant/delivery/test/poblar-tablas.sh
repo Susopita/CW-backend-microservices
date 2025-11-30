@@ -41,7 +41,7 @@ if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
   --item '{
     "user_id": {"S": "USER#cocinero-001"},
-    "entity_type": {"S": "PROFILE"},
+    "entity": {"S": "PROFILE"},
     "tenant_context": {"S": "TENANT#'${SUCURSAL}'"},
     "Role": {"S": "COCINERO"},
     "atributos": {"S": "{\"nombre\": \"Juan Pérez\", \"activo\": true, \"turno\": \"mañana\", \"especialidad\": \"Parrilla\"}"}
@@ -57,7 +57,7 @@ if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
   --item '{
     "user_id": {"S": "USER#cocinero-002"},
-    "entity_type": {"S": "PROFILE"},
+    "entity": {"S": "PROFILE"},
     "tenant_context": {"S": "TENANT#'${SUCURSAL}'"},
     "Role": {"S": "COCINERO"},
     "atributos": {"S": "{\"nombre\": \"Carlos López\", \"activo\": true, \"turno\": \"tarde\", \"especialidad\": \"Fritos\"}"}
@@ -77,7 +77,7 @@ if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
   --item '{
     "user_id": {"S": "USER#despachador-001"},
-    "entity_type": {"S": "PROFILE"},
+    "entity": {"S": "PROFILE"},
     "tenant_context": {"S": "TENANT#'${SUCURSAL}'"},
     "Role": {"S": "DESPACHADOR"},
     "atributos": {"S": "{\"nombre\": \"María García\", \"activo\": true, \"turno\": \"mañana\"}"}
@@ -92,7 +92,7 @@ if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
   --item '{
     "user_id": {"S": "USER#despachador-002"},
-    "entity_type": {"S": "PROFILE"},
+    "entity": {"S": "PROFILE"},
     "tenant_context": {"S": "TENANT#'${SUCURSAL}'"},
     "Role": {"S": "DESPACHADOR"},
     "atributos": {"S": "{\"nombre\": \"Ana Martínez\", \"activo\": true, \"turno\": \"tarde\"}"}
@@ -112,7 +112,7 @@ if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
   --item '{
     "user_id": {"S": "USER#repartidor-001"},
-    "entity_type": {"S": "PROFILE"},
+    "entity": {"S": "PROFILE"},
     "tenant_context": {"S": "TENANT#'${SUCURSAL}'"},
     "Role": {"S": "REPARTIDOR"},
     "atributos": {"S": "{\"nombre\": \"Carlos Rodríguez\", \"activo\": true, \"vehiculo\": \"moto\", \"zona\": \"norte\"}"}
@@ -127,7 +127,7 @@ if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
   --item '{
     "user_id": {"S": "USER#repartidor-002"},
-    "entity_type": {"S": "PROFILE"},
+    "entity": {"S": "PROFILE"},
     "tenant_context": {"S": "TENANT#'${SUCURSAL}'"},
     "Role": {"S": "REPARTIDOR"},
     "atributos": {"S": "{\"nombre\": \"Diego Fernández\", \"activo\": true, \"vehiculo\": \"bicicleta\", \"zona\": \"sur\"}"}
