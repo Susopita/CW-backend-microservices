@@ -1,267 +1,88 @@
 {
     "Comment": "A description of my state machine",
-    "StartAt": "Selector de Evento",
+    "StartAt": "Preparar Contexto",
     "States": {
-        "Selector de Evento": {
+        "Preparar Contexto": {
+            "Type": "Pass",
+            "Assign": {
+                "inputData": "{% $states.input.detail.data %}",
+                "meta": "{% $states.input.detail.meta %}",
+                "userId": "{% $states.input.detail.meta.userId %}",
+                "eventType": "{% $states.input.'detail-type' %}",
+                "tableName": "${self:custom.PedidosTableName}",
+                "usersTable": "${self:custom.UsersTableName}",
+                "busName": "${self:custom.EventBusName}"
+            },
+            "Next": "Router Eventos"
+        },
+        "Router Eventos": {
             "Type": "Choice",
             "Choices": [
                 {
-                    "Next": "Validar opciones",
-                    "Condition": "{% $['detail-type'] = 'AgregarActualizarCarrito' %}"
+                    "Condition": "{% $eventType = 'Carrito.AgregarItem' %}",
+                    "Next": "Carrito: Upsert Item"
                 },
                 {
-                    "Next": "Obtener Ordenes (paginadas)",
-                    "Condition": "{% $['detail-type'] = 'ObtenerHistorialPedidos' %}"
+                    "Condition": "{% $eventType = 'Carrito.EliminarItem' %}",
+                    "Next": "Carrito: Eliminar Item"
                 },
                 {
-                    "Next": "DynamoDB GetItem",
-                    "Condition": "{% $['detail-type'] = 'RealizarCheckout' %}"
+                    "Condition": "{% $eventType = 'Carrito.Vaciar' %}",
+                    "Next": "Carrito: Vaciar Completo"
                 },
                 {
-                    "Next": "DynamoDB GetItem (1)",
-                    "Condition": "{% $['detail-type'] = 'CancelarPedido' %}"
+                    "Condition": "{% $eventType = 'Pedido.Checkout' %}",
+                    "Next": "Checkout: Obtener Carrito"
                 },
                 {
-                    "Next": "Eliminar Producto del Carrito",
-                    "Condition": "{% $['detail-type'] = 'EliminarCarrito' %}"
+                    "Condition": "{% $eventType = 'Pedido.Historial' %}",
+                    "Next": "Historial: Query Paginada"
                 },
                 {
-                    "Next": "Vaciar Carrito",
-                    "Condition": "{% $['detail-type'] = 'VaciarCarrito' %}"
+                    "Condition": "{% $eventType = 'Pedido.Cancelar' %}",
+                    "Next": "Cancelar: Obtener Estado"
                 }
             ]
         },
-        "Eliminar Producto del Carrito": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::dynamodb:deleteItem",
-            "Arguments": {
-                "TableName": "MyDynamoDBTable",
-                "Key": {
-                    "Column": {
-                        "S": "MyEntry"
-                    }
-                }
-            },
-            "Next": "EventBridge PutEvents (6)"
-        },
-        "EventBridge PutEvents (6)": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
-            "Arguments": {
-                "Entries": [
-                    {
-                        "Detail": {
-                            "Message": "Hello from Step Functions!",
-                            "TaskToken": "{% $states.context.Task.Token %}"
-                        },
-                        "DetailType": "MyDetailType",
-                        "EventBusName": "MyEventBusName",
-                        "Source": "MySource"
-                    }
-                ]
-            },
-            "End": true
-        },
-        "DynamoDB GetItem (1)": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::dynamodb:getItem",
-            "Arguments": {
-                "TableName": "MyDynamoDBTable",
-                "Key": {
-                    "Column": {
-                        "S": "MyEntry"
-                    }
-                }
-            },
-            "Next": "Verificar estado cancelable"
-        },
-        "Verificar estado cancelable": {
-            "Type": "Choice",
-            "Choices": [
-                {
-                    "Next": "DynamoDB UpdateItem"
-                }
-            ],
-            "Default": "EventBridge PutEvents (1)"
-        },
-        "DynamoDB UpdateItem": {
+        "Carrito: Upsert Item": {
             "Type": "Task",
             "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Comment": "Agrega item al carrito y renueva el TTL por 24 horas",
             "Arguments": {
-                "TableName": "MyDynamoDBTable",
-                "Key": {
-                    "Column": {
-                        "S": "MyEntry"
-                    }
-                },
-                "UpdateExpression": "SET MyKey = :myValueRef",
-                "ExpressionAttributeValues": {
-                    ":myValueRef": {
-                        "S": "MyValue"
-                    }
-                }
-            },
-            "Next": "Paralelo"
-        },
-        "Paralelo": {
-            "Type": "Parallel",
-            "Branches": [
-                {
-                    "StartAt": "EventBridge PutEvents (4)",
-                    "States": {
-                        "EventBridge PutEvents (4)": {
-                            "Type": "Task",
-                            "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
-                            "Arguments": {
-                                "Entries": [
-                                    {
-                                        "Detail": {
-                                            "Message": "Hello from Step Functions!",
-                                            "TaskToken": "{% $states.context.Task.Token %}"
-                                        },
-                                        "DetailType": "MyDetailType",
-                                        "EventBusName": "MyEventBusName",
-                                        "Source": "MySource"
-                                    }
-                                ]
-                            },
-                            "End": true
-                        }
-                    }
-                },
-                {
-                    "StartAt": "EventBridge PutEvents (5)",
-                    "States": {
-                        "EventBridge PutEvents (5)": {
-                            "Type": "Task",
-                            "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
-                            "Arguments": {
-                                "Entries": [
-                                    {
-                                        "Detail": {
-                                            "Message": "Hello from Step Functions!",
-                                            "TaskToken": "{% $states.context.Task.Token %}"
-                                        },
-                                        "DetailType": "MyDetailType",
-                                        "EventBusName": "MyEventBusName",
-                                        "Source": "MySource"
-                                    }
-                                ]
-                            },
-                            "End": true
-                        }
-                    }
-                }
-            ],
-            "End": true
-        },
-        "DynamoDB GetItem": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::dynamodb:getItem",
-            "Arguments": {
-                "TableName": "MyDynamoDBTable",
-                "Key": {
-                    "Column": {
-                        "S": "MyEntry"
-                    }
-                }
-            },
-            "Next": "Elección"
-        },
-        "Elección": {
-            "Type": "Choice",
-            "Choices": [
-                {
-                    "Next": "EventBridge PutEvents (3)"
-                }
-            ],
-            "Default": "TransactWriteItems"
-        },
-        "EventBridge PutEvents (3)": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
-            "Arguments": {
-                "Entries": [
-                    {
-                        "Detail": {
-                            "Message": "Hello from Step Functions!",
-                            "TaskToken": "{% $states.context.Task.Token %}"
-                        },
-                        "DetailType": "MyDetailType",
-                        "EventBusName": "MyEventBusName",
-                        "Source": "MySource"
-                    }
-                ]
-            },
-            "End": true
-        },
-        "Validar opciones": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Output": "{% $states.result.Payload %}",
-            "Arguments": {
-                "FunctionName": "${validarOpcionesARN}",
-                "Payload": "{% $states.input %}"
-            },
-            "Retry": [
-                {
-                    "ErrorEquals": [
-                        "Lambda.ServiceException",
-                        "Lambda.AWSLambdaException",
-                        "Lambda.SdkClientException",
-                        "Lambda.TooManyRequestsException"
-                    ],
-                    "IntervalSeconds": 1,
-                    "MaxAttempts": 3,
-                    "BackoffRate": 2,
-                    "JitterStrategy": "FULL"
-                }
-            ],
-            "Next": "Agregar o actualizar Pedido al Carrito",
-            "Catch": [
-                {
-                    "ErrorEquals": [
-                        "States.TaskFailed"
-                    ],
-                    "Next": "Selector de Evento"
-                }
-            ]
-        },
-        "Agregar o actualizar Pedido al Carrito": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::dynamodb:updateItem",
-            "Arguments": {
-                "TableName": "DB_Usuarios",
+                "TableName": "${self:custom.UsersTableName}",
                 "Key": {
                     "user_id": {
                         "S": "{% 'USER#' & $userId %}"
                     },
-                    "entity_type": {
+                    "entity": {
                         "S": "CART"
                     }
                 },
-                "UpdateExpression": "SET items.#id = :attrs, updatedAt = :fecha, expiracion = :ttl",
+                "UpdateExpression": "SET items.#id = :attrs, updatedAt = :now, expiracion = :ttl",
                 "ExpressionAttributeNames": {
-                    "#id": "{% $itemId %}"
+                    "#id": "{% $inputData.product.sku %}"
                 },
                 "ExpressionAttributeValues": {
                     ":attrs": {
                         "M": {
                             "nombre": {
-                                "S": "{% $producto.nombre %}"
+                                "S": "{% $inputData.product.name %}"
                             },
                             "precio": {
-                                "N": "{% $string($producto.precio) %}"
+                                "N": "{% $string($inputData.product.price) %}"
                             },
                             "cantidad": {
-                                "N": "{% $string($producto.cantidad) %}"
+                                "N": "{% $string($inputData.product.qty) %}"
+                            },
+                            "img": {
+                                "S": "{% $inputData.product.img ? $inputData.product.img : '' %}"
                             },
                             "opciones": {
-                                "S": "{% $join($producto.opciones, ', ') %}"
+                                "S": "{% $inputData.product.options ? $join($inputData.product.options, ', ') : 'Standard' %}"
                             }
                         }
                     },
-                    ":fecha": {
+                    ":now": {
                         "S": "{% $now() %}"
                     },
                     ":ttl": {
@@ -271,112 +92,432 @@
             },
             "End": true
         },
-        "Obtener Ordenes (paginadas)": {
+        "Carrito: Eliminar Item": {
             "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Comment": "Elimina una llave específica del mapa de items",
             "Arguments": {
-                "TableName": "DB_Pedidos",
-                "ScanIndexForward": false,
-                "Limit": 10,
-                "KeyConditionExpression": "pk = :u AND begins_with(sk, :prefix)",
-                "ExpressionAttributeValues": {
-                    ":u": {
-                        "S": "{% 'USER#' & $userId %}"
-                    },
-                    ":prefix": {
-                        "S": "ORDER#"
-                    }
-                },
-                "ExclusiveStartKey": "{% $nextToken %}"
-            },
-            "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
-            "Next": "EventBridge PutEvents"
-        },
-        "EventBridge PutEvents": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
-            "Arguments": {
-                "Entries": [
-                    {
-                        "Detail": {
-                            "Message": "Hello from Step Functions!",
-                            "TaskToken": "{% $states.context.Task.Token %}"
-                        },
-                        "DetailType": "MyDetailType",
-                        "EventBusName": "MyEventBusName",
-                        "Source": "MySource"
-                    }
-                ]
-            },
-            "End": true
-        },
-        "TransactWriteItems": {
-            "Type": "Task",
-            "Arguments": {
-                "TransactItems": [
-                    {}
-                ]
-            },
-            "Resource": "arn:aws:states:::aws-sdk:dynamodb:transactWriteItems",
-            "Next": "EventBridge PutEvents (2)"
-        },
-        "EventBridge PutEvents (2)": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
-            "Arguments": {
-                "Entries": [
-                    {
-                        "Detail": {
-                            "Message": "Hello from Step Functions!",
-                            "TaskToken": "{% $states.context.Task.Token %}"
-                        },
-                        "DetailType": "MyDetailType",
-                        "EventBusName": "MyEventBusName",
-                        "Source": "MySource"
-                    }
-                ]
-            },
-            "End": true
-        },
-        "EventBridge PutEvents (1)": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
-            "Arguments": {
-                "Entries": [
-                    {
-                        "Detail": {
-                            "Message": "Hello from Step Functions!",
-                            "TaskToken": "{% $states.context.Task.Token %}"
-                        },
-                        "DetailType": "MyDetailType",
-                        "EventBusName": "MyEventBusName",
-                        "Source": "MySource"
-                    }
-                ]
-            },
-            "End": true
-        },
-        "Vaciar Carrito": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::dynamodb:deleteItem",
-            "Arguments": {
-                "TableName": "DB_Usuarios",
+                "TableName": "{% $usersTable %}",
                 "Key": {
                     "user_id": {
-                        "S": "{% 'USER#' & $states.input.userId %}"
+                        "S": "{% 'USER#' & $userId %}"
                     },
-                    "entity_type": {
+                    "entity": {
                         "S": "CART"
                     }
                 },
-                "UpdateExpression": "REMOVE items SET updatedAt = :now",
+                "UpdateExpression": "REMOVE items.#sku SET updatedAt = :now",
+                "ExpressionAttributeNames": {
+                    "#sku": "{% $inputData.skuToRemove %}"
+                },
                 "ExpressionAttributeValues": {
                     ":now": {
                         "S": "{% $now() %}"
                     }
-                },
-                "ReturnValues": "ALL_NEW"
+                }
             },
-            "Next": "EventBridge PutEvents (6)"
+            "End": true
+        },
+        "Carrito: Vaciar Completo": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:deleteItem",
+            "Arguments": {
+                "TableName": "{% $usersTable %}",
+                "Key": {
+                    "user_id": {
+                        "S": "{% 'USER#' & $userId %}"
+                    },
+                    "entity": {
+                        "S": "CART"
+                    }
+                }
+            },
+            "End": true
+        },
+        "Cancelar: Obtener Estado": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:getItem",
+            "Arguments": {
+                "TableName": "{% $tableName %}",
+                "Key": {
+                    "pedido_id": {
+                        "S": "{% $inputData.orderId %}"
+                    },
+                    "entity": {
+                        "S": "METADATA"
+                    }
+                }
+            },
+            "Assign": {
+                "orderItem": "{% $states.result.Item %}"
+            },
+            "Next": "Cancelar: Validar Estado"
+        },
+        "Cancelar: Validar Estado": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Condition": "{% $orderItem.status.S in ['EN PREPARACION', 'EN DESPACHO', 'PAID'] %}",
+                    "Next": "Cancelar: Actualizar DB"
+                }
+            ],
+            "Default": "Notificar: No Cancelable"
+        },
+        "Notificar: No Cancelable": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::events:putEvents",
+            "Comment": "Este evento avisa a Inventario (Devolver Stock) y Pagos (Reembolsar)",
+            "Arguments": {
+                "Entries": [
+                    {
+                        "Source": "app.orders",
+                        "DetailType": "Pedido.Cancelado",
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({ \"meta\": $merge([\n    $meta,{\n      \"scope\": \"NOTIFICATION\",\n      \"targetType\": \"USER\",\n      \"targetId\": $meta.userId\n    }]),\n  \"ui\": {\n    \"action\": \"SHOW_TOAST\",\n    \"variant\": \"ERROR\",\n    \"message\": \"Pedido no cancelable\"\n  }, \"data\": { \"orderId\": $inputData.orderId, \"reason\": \"UserRequest\", \"refundAmount\": $orderItem.total.N } }) %}"
+                    }
+                ]
+            },
+            "End": true
+        },
+        "Cancelar: Actualizar DB": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Arguments": {
+                "TableName": "{% $tableName %}",
+                "Key": {
+                    "pedido_id": {
+                        "S": "{% $inputData.orderId %}"
+                    },
+                    "entity": {
+                        "S": "METADATA"
+                    }
+                },
+                "UpdateExpression": "SET #s = :newStatus, updatedAt = :now",
+                "ExpressionAttributeNames": {
+                    "#s": "status"
+                },
+                "ExpressionAttributeValues": {
+                    ":newStatus": {
+                        "S": "CANCELLED"
+                    },
+                    ":now": {
+                        "S": "{% $now() %}"
+                    }
+                }
+            },
+            "Next": "Cancelar: Emitir Evento Compensacion"
+        },
+        "Cancelar: Emitir Evento Compensacion": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::events:putEvents",
+            "Comment": "Este evento avisa a Inventario (Devolver Stock) y Pagos (Reembolsar)",
+            "Arguments": {
+                "Entries": [
+                    {
+                        "Source": "app.orders",
+                        "DetailType": "Pedido.Cancelado",
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({ \"meta\": $meta, \"data\": { \"orderId\": $inputData.orderId, \"reason\": \"UserRequest\", \"refundAmount\": $orderItem.total.N } }) %}"
+                    }
+                ]
+            },
+            "End": true
+        },
+        "Checkout: Obtener Carrito": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:getItem",
+            "Arguments": {
+                "TableName": "{% $usersTable %}",
+                "Key": {
+                    "user_id": {
+                        "S": "{% 'USER#' & $userId %}"
+                    },
+                    "entity": {
+                        "S": "CART"
+                    }
+                }
+            },
+            "Assign": {
+                "cart": "{% $states.result.Item %}",
+                "orderId": "{% 'ORD-' & $uuid() %}"
+            },
+            "Next": "Checkout: Validar"
+        },
+        "Checkout: Validar": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Condition": "{% $not($exists($cart)) or $not($exists($cart.items.M)) %}",
+                    "Next": "Error: Carrito Vacio"
+                }
+            ],
+            "Default": "Checkout: Crear Pedido PENDING"
+        },
+        "Checkout: Crear Pedido PENDING": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:putItem",
+            "Arguments": {
+                "TableName": "{% $tableName %}",
+                "Item": {
+                    "pedido_id": {
+                        "S": "{% $orderId %}"
+                    },
+                    "entity": {
+                        "S": "METADATA"
+                    },
+                    "user_id": {
+                        "S": "{% 'USER#' & $userId %}"
+                    },
+                    "createdAt": {
+                        "S": "{% $now() %}"
+                    },
+                    "status": {
+                        "S": "PENDING"
+                    },
+                    "items": "{% $cart.items %}",
+                    "total": {
+                        "N": "100.00"
+                    }
+                }
+            },
+            "Next": "SAGA: Reservar Inventario"
+        },
+        "SAGA: Reservar Inventario": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
+            "TimeoutSeconds": 60,
+            "Arguments": {
+                "Entries": [
+                    {
+                        "Source": "app.orders",
+                        "DetailType": "Stock.Verificar",
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({ \n  \"meta\": $meta, \n  \"data\": { \n    \"orderId\": $orderId, \n    \"items\": $cart.items.M ~> $each(function($v, $k) { { \n    \"productSku\": $k, \n    \"qty\": $v.M.qty.N, \n    \"tenantId\": $inputData.sucursal } } ), \n    \"myTaskToken\": $states.context.Task.Token \n  } } ) %}"
+                    }
+                ]
+            },
+            "Next": "SAGA: Procesar Pago",
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.Timeout",
+                        "SIN_STOCK"
+                    ],
+                    "Next": "SAGA: Fallo Inventario"
+                }
+            ]
+        },
+        "SAGA: Procesar Pago": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::events:putEvents.waitForTaskToken",
+            "TimeoutSeconds": 60,
+            "Arguments": {
+                "Entries": [
+                    {
+                        "Source": "app.orders",
+                        "DetailType": "Payment.Initiate",
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({ \"meta\": $meta, \"data\": { \"orderId\": $orderId, \"amount\": 100.00, \"paymentToken\": $inputData.paymentToken, \"myTaskToken\": $states.context.Task.Token } }) %}"
+                    }
+                ]
+            },
+            "Next": "Checkout: Confirmar y Limpiar",
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.Timeout",
+                        "PAGO_RECHAZADO"
+                    ],
+                    "Next": "SAGA: Fallo Pago (Rollback Stock)"
+                }
+            ]
+        },
+        "Checkout: Confirmar y Limpiar": {
+            "Type": "Parallel",
+            "End": true,
+            "Branches": [
+                {
+                    "StartAt": "DB: Marcar Pagado",
+                    "States": {
+                        "DB: Marcar Pagado": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::dynamodb:updateItem",
+                            "Arguments": {
+                                "TableName": "{% $tableName %}",
+                                "Key": {
+                                    "pedido_id": {
+                                        "S": "{% $orderId %}"
+                                    },
+                                    "entity": {
+                                        "S": "METADATA"
+                                    }
+                                },
+                                "UpdateExpression": "SET #s = :s",
+                                "ExpressionAttributeNames": {
+                                    "#s": "status"
+                                },
+                                "ExpressionAttributeValues": {
+                                    ":s": {
+                                        "S": "PAID"
+                                    }
+                                }
+                            },
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "DB: Borrar Carrito",
+                    "States": {
+                        "DB: Borrar Carrito": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::dynamodb:deleteItem",
+                            "Arguments": {
+                                "TableName": "{% $usersTable %}",
+                                "Key": {
+                                    "user_id": {
+                                        "S": "{% 'USER#' & $userId %}"
+                                    },
+                                    "entity": {
+                                        "S": "CART"
+                                    }
+                                }
+                            },
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "Notificar: Exito",
+                    "States": {
+                        "Notificar: Exito": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::events:putEvents",
+                            "Arguments": {
+                                "Entries": [
+                                    {
+                                        "Source": "app.orders",
+                                        "DetailType": "Pedido.CreadoExito",
+                                        "EventBusName": "{% $busName %}",
+                                        "Detail": "{% $string({ \"meta\": $merge([\n              $meta,{\n                \"scope\": \"NOTIFICATION\",\n                \"targetType\": \"USER\",\n                \"targetId\": $meta.userId\n              }]), \"data\": { \"orderId\": $orderId, \"status\": \"CONFIRMED\" } }) %}"
+                                    }
+                                ]
+                            },
+                            "End": true
+                        }
+                    }
+                }
+            ]
+        },
+        "SAGA: Fallo Inventario": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Arguments": {
+                "TableName": "{% $tableName %}",
+                "Key": {
+                    "pedido_id": {
+                        "S": "{% $orderId %}"
+                    },
+                    "entity": {
+                        "S": "METADATA"
+                    }
+                },
+                "UpdateExpression": "SET #s = :s",
+                "ExpressionAttributeNames": {
+                    "#s": "status"
+                },
+                "ExpressionAttributeValues": {
+                    ":s": {
+                        "S": "FAILED_STOCK"
+                    }
+                }
+            },
+            "Next": "Error: Pedido Fallido"
+        },
+        "SAGA: Fallo Pago (Rollback Stock)": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::events:putEvents",
+            "Comment": "Evento que Inventario escuchará para devolver los items",
+            "Arguments": {
+                "Entries": [
+                    {
+                        "Source": "app.orders",
+                        "DetailType": "Pedido.Cancelado",
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({ \"meta\": $meta, \"data\": { \"orderId\": $orderId, \"reason\": \"PaymentFailed\" } }) %}"
+                    }
+                ]
+            },
+            "Next": "DB: Marcar Fallo Pago"
+        },
+        "DB: Marcar Fallo Pago": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Arguments": {
+                "TableName": "{% $tableName %}",
+                "Key": {
+                    "pedido_id": {
+                        "S": "{% $orderId %}"
+                    },
+                    "entity": {
+                        "S": "METADATA"
+                    }
+                },
+                "UpdateExpression": "SET #s = :s",
+                "ExpressionAttributeNames": {
+                    "#s": "status"
+                },
+                "ExpressionAttributeValues": {
+                    ":s": {
+                        "S": "FAILED_PAYMENT"
+                    }
+                }
+            },
+            "Next": "Error: Pedido Fallido"
+        },
+        "Error: Carrito Vacio": {
+            "Type": "Fail",
+            "Error": "CartEmpty"
+        },
+        "Error: Pedido Fallido": {
+            "Type": "Fail",
+            "Error": "OrderFailed"
+        },
+        "Historial: Query Paginada": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
+            "Arguments": {
+                "TableName": "{% $tableName %}",
+                "KeyConditionExpression": "user_id = :u",
+                "ExpressionAttributeValues": {
+                    ":u": {
+                        "S": "{% 'USER#' & $userId %}"
+                    }
+                },
+                "ScanIndexForward": false,
+                "Limit": 10,
+                "ExclusiveStartKey": "{% $inputData.nextPageKey ? $inputData.nextPageKey : null %}"
+            },
+            "Assign": {
+                "ordersList": "{% $states.result.Items %}",
+                "nextKey": "{% $states.result.LastEvaluatedKey %}"
+            },
+            "Next": "Historial: Responder a Cliente"
+        },
+        "Historial: Responder a Cliente": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::events:putEvents",
+            "Arguments": {
+                "Entries": [
+                    {
+                        "Source": "app.orders",
+                        "DetailType": "Pedido.HistorialEntregado",
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({ \"meta\": $merge([$meta, { \"scope\": \"NOTIFICATION\", \"targetType\": \"CONNECTION\", \"targetId\": $meta.connectionId }]), \"data\": { \"orders\": $ordersList, \"nextPageKey\": $nextKey } }) %}"
+                    }
+                ]
+            },
+            "End": true
         }
     },
     "QueryLanguage": "JSONata"

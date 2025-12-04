@@ -1,33 +1,34 @@
 {
     "products": [
         {
-            "tenantId": "SURCO_1",
-            "sku": "ALITAS_BBQ_12",
-            "productType": "PLATO_FONDO",
-            "stock": 50,
-            "price": 24.90,
+            "producto_id": "ALITAS_BBQ_12",
+            "tenant_id": "SURCO_1",
+            "tipo_id": "PLATO",
             "name": "Alitas BBQ x12",
             "description": "12 Alitas bañadas en salsa BBQ con papas fritas",
+            "stock": 50,
+            "price": 24.90,
             "img": "https://img.chinawok.com/alitas.jpg"
         },
         {
-            "tenantId": "SURCO_1",
-            "sku": "BEBIDA_INKA_1.5L",
-            "productType": "BEBIDAS",
-            "stock": 100,
-            "price": 12.50,
-            "name": "Inca Kola 1.5L",
-            "description": "El sabor del perú, bien helada",
-            "img": "https://img.chinawok.com/inka.jpg"
+            "producto_id": "WANTAN_FRITO",
+            "tenant_id": "SURCO_1",
+            "tipo_id": "ENTRADA",
+            "name": "Wantan Frito (6 und)",
+            "description": "Clásicos wantanes fritos con salsa de tamarindo",
+            "stock": 200,
+            "price": 8.90,
+            "img": "https://img.chinawok.com/wantan.jpg"
         },
         {
-            "tenantId": "LARCO_1",
-            "sku": "ALITAS_BBQ_12",
-            "productType": "PLATO_FONDO",
-            "stock": 20,
-            "price": 26.90,
-            "name": "Alitas BBQ x12",
-            "description": "Precio diferenciado por zona turística"
+            "producto_id": "INKA_KOLA_1.5L",
+            "tenant_id": "SURCO_1",
+            "tipo_id": "BEBIDA",
+            "name": "Inka Kola 1.5L",
+            "description": "La bebida de sabor nacional",
+            "stock": 100,
+            "price": 12.50,
+            "img": "https://img.chinawok.com/inka.jpg"
         }
     ]
 }

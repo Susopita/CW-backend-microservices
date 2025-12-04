@@ -16,7 +16,7 @@ provider:
   name: ${self:custom.common.provider.name}
   runtime: ${self:custom.common.provider.runtime}
   region: ${self:custom.common.provider.region}
-  stage: ${self:custom.common.provider.stage}
+  stage: ${opt:stage, 'dev'}
   iam: ${self:custom.common.provider.iam}
   environment: ${self:custom.common.provider.environment}
 
@@ -67,7 +67,7 @@ resources:
     NotificationQueue:
       Type: AWS::SQS::Queue
       Properties:
-        QueueName: cw-notification-queue
+        QueueName: cw-notification-queue-${self:provider.stage}
         # Configuración opcional: Retención de mensajes (ej. 4 días)
         MessageRetentionPeriod: 345600 
 
@@ -95,7 +95,7 @@ resources:
       Properties:
         Description: "Captura cualquier evento marcado con scope NOTIFICATION"
         # Referencia al Bus Central creado en el stack raíz
-        EventBusName: ${cf:cw-infra-shared-${self:provider.stage}.BusNameExport}
+        EventBusName: ${self:provider.environment.EVENT_BUS_NAME}
         State: ENABLED
         
         # AQUÍ ESTÁ LA MAGIA:

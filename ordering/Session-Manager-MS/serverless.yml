@@ -30,7 +30,7 @@ provider:
   name: ${self:custom.common.provider.name}
   runtime: ${self:custom.common.provider.runtime}
   region: ${self:custom.common.provider.region}
-  stage: ${self:custom.common.provider.stage}
+  stage: ${opt:stage, 'dev'}
   memorySize: ${self:custom.common.provider.memorySize}
   timeout: ${self:custom.common.provider.timeout}
   

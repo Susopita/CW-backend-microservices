@@ -2,7 +2,6 @@ provider:
   name: aws
   runtime: nodejs18.x
   region: us-east-1
-  stage: dev
   memorySize: 2048
   timeout: 29
   
@@ -16,7 +15,7 @@ provider:
     EVENT_BUS_NAME: 
       Fn::ImportValue: cw-event-bus-name-${self:provider.stage}
     WEBSOCKET_ENDPOINT: 
-        Fn::ImportValue: cw-websocket-endpoint-${self:provider.stage}
+      Fn::ImportValue: cw-websocket-endpoint-${self:provider.stage}
     CONNECTIONS_TABLE: 
       Fn::ImportValue: cw-connections-table-name-${self:provider.stage}
     USER_POOL_CLIENT_ID:

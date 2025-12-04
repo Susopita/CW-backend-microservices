@@ -81,7 +81,7 @@ resources:
     CentralEventBus:
       Type: AWS::Events::EventBus
       Properties:
-        Name: cw-event-bus
+        Name: cw-event-bus-${self:provider.stage}
   
     # ---------------------------------------------------
     # PERMISOS DE LA LAMBDA RELAY
@@ -228,9 +228,9 @@ resources:
         
         # Primary Key (PK) Principal
         KeySchema:
-          - AttributeName: tenant_id
-            KeyType: HASH 
           - AttributeName: producto_id
+            KeyType: HASH 
+          - AttributeName: tenant_id
             KeyType: RANGE
 
         # Índices Secundarios Globales (GSI)
@@ -238,11 +238,11 @@ resources:
           
           # GSI 1: Para buscar productos por SUCURSAL (tenant_id)
           # Query: Dame todo el inventario de "SURCO_1"
-          - IndexName: producto_id-index
+          - IndexName: tenant_id-index
             KeySchema:
-              - AttributeName: producto_id
-                KeyType: HASH
               - AttributeName: tenant_id
+                KeyType: HASH
+              - AttributeName: producto_id
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL # Traemos stock, precio, etc.
@@ -252,9 +252,81 @@ resources:
           # Útil para reportes globales o catálogo general
           - IndexName: tipo_id-index
             KeySchema:
-              - AttributeName: producto_id
-                KeyType: HASH
               - AttributeName: tipo_id
+                KeyType: HASH
+              - AttributeName: producto_id
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    # ---------------------------------------------------
+    # TABLA DE TRANSACCIONES (Pagos)
+    # ---------------------------------------------------
+    TransactionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: cw-transacciones-${self:provider.stage}
+        BillingMode: PAY_PER_REQUEST
+        
+        # Definimos los atributos que son Llaves (PK/SK) o Índices
+        AttributeDefinitions:
+          - AttributeName: tx_id
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: S
+          - AttributeName: pedido_id
+            AttributeType: S
+          - AttributeName: tenant_id
+            AttributeType: S
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: S
+        
+        # LLAVE PRIMARIA (Tabla Base)
+        # PK: tx_id (Ej: TX#tx-001)
+        # SK: sk    (Ej: METADATA)
+        KeySchema:
+          - AttributeName: tx_id
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+
+        # ÍNDICES SECUNDARIOS (GSIs) - Según tu imagen
+        GlobalSecondaryIndexes:
+          
+          # GSI 1: Buscar por PEDIDO (Para reembolsos)
+          # pk: pedido_id (Ej: ORDER#ord-100)
+          # sk: timestamp (Para ordenar eventos del pedido) - "gsi_sk_all" en tu imagen
+          - IndexName: pedido_id-index
+            KeySchema:
+              - AttributeName: pedido_id
+                KeyType: HASH
+              - AttributeName: timestamp
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+          # GSI 2: Buscar por TENANT (Reportes por sucursal)
+          # pk: tenant_id (Ej: TENANT#SURCO_1)
+          # sk: timestamp
+          - IndexName: tenant_id-index
+            KeySchema:
+              - AttributeName: tenant_id
+                KeyType: HASH
+              - AttributeName: timestamp
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+          # GSI 3: Buscar por USUARIO (Historial de compras)
+          # pk: user_id (Ej: USER#juan-123)
+          # sk: timestamp
+          - IndexName: user_id-index
+            KeySchema:
+              - AttributeName: user_id
+                KeyType: HASH
+              - AttributeName: timestamp
                 KeyType: RANGE
             Projection:
               ProjectionType: ALL
@@ -422,6 +494,20 @@ resources:
       Value: !GetAtt InventoryTable.Arn
       Export:
         Name: cw-inventory-table-arn-${self:provider.stage}
+
+    # NOMBRE de la tabla de transacciones
+    TransactionsTableName:
+      Description: "Nombre de la tabla de transacciones"
+      Value: !Ref TransactionsTable
+      Export:
+        Name: cw-transacciones-table-name-${self:provider.stage}
+
+    # ARN de la tabla de transacciones
+    TransactionsTableArn:
+      Description: "ARN de la tabla de transacciones"
+      Value: !GetAtt TransactionsTable.Arn
+      Export:
+        Name: cw-transacciones-table-arn-${self:provider.stage}
 
     # ---------------------------------------------------
     # OUTPUTS (Para exportar al Session Manager MS)

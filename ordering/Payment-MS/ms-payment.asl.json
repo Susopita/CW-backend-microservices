@@ -1,16 +1,28 @@
 {
     "Comment": "Flujo de trabajo para Microservicio de Pagos y Facturacion",
-    "StartAt": "Selector de Evento",
+    "StartAt": "Preparar Contexto",
     "States": {
-        "Selector de Evento": {
+        "Preparar Contexto": {
+            "Type": "Pass",
+            "Assign": {
+                "inputData": "{% $states.input.detail.data %}",
+                "meta": "{% $states.input.detail.meta %}",
+                "tokenOrquestador": "{% $states.input.detail.data.myTaskToken %}",
+                "busName": "${self:custom.EventBusName}",
+                "txTable": "${self:custom.TransactionsTableName}",
+                "eventType": "{% $states.input.'detail-type' %}"
+            },
+            "Next": "Router Eventos"
+        },
+        "Router Eventos": {
             "Type": "Choice",
             "Choices": [
                 {
-                    "Condition": "{% $states.input['detail-type'] = 'Payment.Initiate' %}",
+                    "Condition": "{% $eventType = 'Payment.Initiate' %}",
                     "Next": "Validar Datos de Entrada"
                 },
                 {
-                    "Condition": "{% $states.input['detail-type'] = 'Order.Cancelled' %}",
+                    "Condition": "{% $eventType = 'Pedido.Cancelado' %}",
                     "Next": "Procesar Reembolso"
                 }
             ],
