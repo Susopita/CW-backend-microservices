@@ -15,8 +15,8 @@ custom:
   esbuild: ${self:custom.common.custom.esbuild}
 
   # Step Functions State Machine
-  InventoryTableName: ${cf:cw-infra-shared-${self:provider.stage}.InventoryTableName}
-  EventBusName: ${cf:cw-infra-shared-${self:provider.stage}.BusNameExport}
+  InventoryTableName: ${self:custom.common.provider.environment.INVENTORY_TABLE_NAME}
+  EventBusName: ${self:custom.common.provider.environment.EVENT_BUS_NAME}
 
 # 3. PLUGINS (Se deben listar explícitamente en cada servicio)
 plugins:
@@ -29,7 +29,7 @@ provider:
   name: ${self:custom.common.provider.name}
   runtime: ${self:custom.common.provider.runtime}
   region: ${self:custom.common.provider.region}
-  stage: ${self:custom.common.provider.stage}
+  stage: ${opt:stage, 'dev'}
   memorySize: ${self:custom.common.provider.memorySize}
   timeout: ${self:custom.common.provider.timeout}
   
@@ -66,7 +66,7 @@ stepFunctions:
         # REGLA 1: Tráfico del Frontend (WebSocket)
         # Requiere validación de conexión estricta
         - eventBridge:
-            eventBusName: ${cf:cw-infra-shared-${self:provider.stage}.BusNameExport}
+            eventBusName: ${self:provider.environment.EVENT_BUS_NAME}
             iamRole: ${self:custom.common.provider.iam.role}
             event:
               source:
@@ -83,7 +83,7 @@ stepFunctions:
         # Viene de otros MS (Pedidos/Pagos), no filtramos por connectionId estricto
         # porque a veces son procesos batch o internos.
         - eventBridge:
-            eventBusName: ${cf:cw-infra-shared-${self:provider.stage}.BusNameExport}
+            eventBusName: ${self:provider.environment.EVENT_BUS_NAME}
             iamRole: ${self:custom.common.provider.iam.role}
             event:
               source: 

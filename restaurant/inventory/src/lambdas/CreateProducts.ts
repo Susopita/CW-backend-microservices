@@ -19,9 +19,9 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
         const writeRequests = products.map((prod: any) => ({
             PutRequest: {
                 Item: {
-                    pk: `TENANT#${prod.tenantId}`,      // Partition Key
-                    sk: `PROD#${prod.sku}`,             // Sort Key
-                    productType: prod.productType,      // GSI Key
+                    producto_id: `TENANT#${prod.producto_id}`,      // Partition Key
+                    tenant_id: `PROD#${prod.tenant_id}`,             // Sort Key
+                    tipo_id: prod.tipo_id,      // GSI Key
 
                     stock: prod.stock,
                     price: prod.price,

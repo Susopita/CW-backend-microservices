@@ -8,8 +8,11 @@
                 "meta": "{% $states.input.detail.meta %}",
                 "inputData": "{% $states.input.detail.data %}",
                 "eventType": "{% $states.input.'detail-type' %}",
+                "connectionId": "{% $states.input.detail.meta.connectionId %}",
                 "taskToken": "{% $states.input.detail.data.myTaskToken ? $states.input.detail.data.myTaskToken : null %}",
-                "limit": "{% $states.input.detail.data.limit ? $states.input.detail.data.limit : 20 %}"
+                "limit": "{% $number($states.input.detail.data.limit ? $states.input.detail.data.limit : 20) %}",
+                "tableName": "${self:custom.InventoryTableName}",
+                "busName": "${self:custom.EventBusName}"
             },
             "Next": "Router Eventos"
         },
@@ -41,7 +44,7 @@
         "Revertir Reserva (Rollback)": {
             "Type": "Task",
             "Arguments": {
-                "TransactItems": "{% $inputData.items ~> $map(function($item) {\n{\n  \"Update\": {\n    \"TableName\": \"${self:custom.InventoryTableName}\",\n    \"Key\": {\n      \"pk\": { \"S\": $item.tenantId },\n      \"sk\": { \"S\": $item.productSku }\n    },\n    \"UpdateExpression\": \"SET stock = stock + :qty\",\n    \"ExpressionAttributeValues\": {\n      \":qty\": { \"N\": $string($item.qty) }\n    }\n  }\n}\n}) %}"
+                "TransactItems": "{% $inputData.items ~> $map(function($item) { { \"Update\": { \"TableName\": \"$tableName\", \"Key\": { \"pk\": { \"S\": $item.tenantId }, \"sk\": { \"S\": $item.productSku } }, \"UpdateExpression\": \"SET stock = stock + :qty\", \"ExpressionAttributeValues\": { \":qty\": { \"N\": $string($item.qty) } } } } }) %}"
             },
             "Comment": "Suma el stock de vuelta a todos los items.",
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:transactWriteItems",
@@ -58,11 +61,26 @@
         "Obtener Stock paginado": {
             "Type": "Task",
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
-            "Arguments": "{% $merge([\n  { \n    \"TableName\": \"${self:custom.InventoryTableName}\", \n    \"IndexName\": \"tipo_id-index\", \n    \"KeyConditionExpression\": \"productType = :ptype\", \n    \"FilterExpression\": \"stock > :zero\", \n    \"ExpressionAttributeValues\": { \n      \":ptype\": { \n        \"S\": $inputData.productType ? $inputData.productType : 'PROMOCIONES'\n      }, \n      \":zero\": { \n        \"N\": \"0\"\n      } \n    }, \n    \"Limit\": $limit\n  }, \n  $inputData.nextPageKey ? { \n    \"ExclusiveStartKey\": $inputData.nextPageKey \n  } : {}\n]) %}",
+            "Arguments": {
+                "TableName": "{% $tableName %}",
+                "IndexName": "tipo_id-index",
+                "KeyConditionExpression": "tipo_id = :ptype",
+                "FilterExpression": "stock > :zero",
+                "ExpressionAttributeValues": {
+                    ":ptype": {
+                        "S": "{% $inputData.tipo_id ? $inputData.tipo_id : 'PROMOCIONES' %}"
+                    },
+                    ":zero": {
+                        "N": "0"
+                    }
+                },
+                "Limit": "{% $limit %}",
+                "ExclusiveStartKey": "{% $inputData.nextPageKey ? $inputData.nextPageKey : null %}"
+            },
             "Next": "Notificar: Stock listado",
             "Assign": {
                 "items": "{% $states.result.Items %}",
-                "lastKey": "{% $states.result.LastEvaluatedKey %}"
+                "lastKey": "{% $states.result.LastEvaluatedKey ? $states.result.LastEvaluatedKey : null %}"
             }
         },
         "Notificar: Stock listado": {
@@ -73,7 +91,7 @@
                     {
                         "Source": "app.inventory",
                         "DetailType": "Producto.ListadoExitoso",
-                        "EventBusName": "${EventBusName}",
+                        "EventBusName": "{% $busName %}",
                         "Detail": "{% $string({\n  \"meta\": $merge([\n    $meta,{\n      \"scope\": \"NOTIFICATION\",\n      \"targetType\": \"CONNECTION\",\n      \"targetId\": $connectionId\n    }]),\n  \"ui\": {\n    \"action\": \"HYDRATE\",\n    \"target\": \"products_store\",\n    \"variant\": \"SUCCESS\",\n    \"message\": \"Productos cargados\"\n  },\n  \"data\": {\n    \"products\": $items,\n    \"nextPageKey\": $lastKey\n  }}) %}"
                     }
                 ]
@@ -85,7 +103,7 @@
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:transactWriteItems",
             "Comment": "Resta stock de TODOS los items. Si uno no tiene stock, falla todo.",
             "Arguments": {
-                "TransactItems": "{% $inputData.items ~> $map(function($item) {\n{\n  \"Update\": {\n    \"TableName\": \"${self:custom.InventoryTableName}\",\n    \"Key\": {\n      \"pk\": { \"S\": $item.tenantId },\n      \"sk\": { \"S\": $item.productSku }\n    },\n    \"UpdateExpression\": \"SET stock = stock - :qty\",\n    \"ConditionExpression\": \"stock >= :qty\",\n    \"ExpressionAttributeValues\": {\n      \":qty\": { \"N\": $string($item.qty) }\n    }\n  }\n}\n}) %}"
+                "TransactItems": "{% $inputData.items ~> $map(function($item) { { \"Update\": { \"TableName\": \"$tableName\", \"Key\": { \"pk\": { \"S\": $item.tenantId }, \"sk\": { \"S\": $item.productSku } }, \"UpdateExpression\": \"SET stock = stock - :qty\", \"ConditionExpression\": \"stock >= :qty\", \"ExpressionAttributeValues\": { \":qty\": { \"N\": $string($item.qty) } } } } }) %}"
             },
             "Next": "Responder a MS Pedidos: Éxito",
             "Catch": [
@@ -125,8 +143,8 @@
                     {
                         "Source": "app.inventory",
                         "DetailType": "Pedido.EnPreparacion",
-                        "EventBusName": "${EventBusName}",
-                        "Detail": "{% $string({\n            \"meta\": $meta,\n            \"data\": { \n              \"orderId\": $inputData.orderId, \n              \"items\": $inputData.items \n            }\n}) %}"
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({\n            \"meta\": $meta,\n            \"data\": { \n              \"orderId\": $inputData.orderId,\n              \"items\": $inputData.items,\n              \"email\": $inputData.email\n            }\n}) %}"
                     }
                 ]
             },
@@ -140,7 +158,7 @@
                     {
                         "Source": "app.inventory",
                         "DetailType": "Stock.Liberado",
-                        "EventBusName": "${EventBusName}",
+                        "EventBusName": "{% $busName %}",
                         "Detail": "{% $string({\n            \"meta\": $merge([\n              $meta,{\n                \"scope\": \"NOTIFICATION\",\n                \"targetType\": \"USER\",\n                \"targetId\": $meta.userId\n              }]),\n            \"data\": { \"orderId\": $inputData.orderId, \"status\": \"ROLLBACK_OK\" }\n          }) %}"
                     }
                 ]
