@@ -17,9 +17,9 @@ custom:
   esbuild: ${self:custom.common.custom.esbuild}
 
   # Recursos compartidos
-  UsuariosTableName: ${cf:cw-infra-shared-${self:provider.stage}.UsuariosTableName}
-  PedidosTableName: ${cf:cw-infra-shared-${self:provider.stage}.PedidosTableName}
-  EventBusName: ${cf:cw-infra-shared-${self:provider.stage}.BusNameExport}
+  UsuariosTableName: ${self.custom.common.provider.environment.USERS_TABLE}
+  PedidosTableName: ${self.custom.common.provider.environment.PEDIDOS_TABLE}
+  EventBusName: ${self.custom.common.provider.environment.EVENT_BUS_NAME}
 
 # ==========================================================
 # 2. PLUGINS
@@ -36,7 +36,7 @@ provider:
   name: ${self:custom.common.provider.name}
   runtime: ${self:custom.common.provider.runtime}
   region: ${self:custom.common.provider.region}
-  stage: ${self:custom.common.provider.stage}
+  stage: ${opt:stage, 'dev'}
   memorySize: ${self:custom.common.provider.memorySize}
   timeout: ${self:custom.common.provider.timeout}
 

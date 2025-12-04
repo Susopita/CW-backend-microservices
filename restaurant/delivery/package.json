@@ -5,6 +5,7 @@
   "private": true,
   "devDependencies": {
     "@types/node": "^20.10.0",
-    "serverless-step-functions": "^3.23.3"
+    "serverless-step-functions": "^3.23.3",
+    "@cw/shared": "*"
   }
 }

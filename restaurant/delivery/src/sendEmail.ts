@@ -1,15 +1,5 @@
 import { Handler } from 'aws-lambda';
-
-interface EmailRequest {
-  to: string;
-  subject: string;
-  htmlContent: string;
-}
-
-interface EmailResponse {
-  statusCode: number;
-  body: string;
-}
+import { EmailRequest, EmailResponse } from '@cw/shared';
 
 export const handler: Handler<EmailRequest, EmailResponse> = async (event) => {
   const { to, subject, htmlContent } = event;

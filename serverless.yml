@@ -4,7 +4,7 @@ provider:
   name: aws
   runtime: nodejs18.x
   region: us-east-1
-  stage: dev
+  stage: ${opt:stage, 'dev'}
   environment:
     CONNECTIONS_TABLE: !Ref ConnectionsTable
     EVENT_BUS_NAME: !Ref CentralEventBus
