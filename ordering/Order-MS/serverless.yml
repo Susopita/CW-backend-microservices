@@ -14,9 +14,15 @@ custom:
   # Heredamos la configuración de esbuild del archivo común
   esbuild: ${self:custom.common.custom.esbuild}
 
+  # Variables de Infraestructura (Importadas de Infra Shared)
+  EventBusName: ${self:custom.common.provider.environment.EVENT_BUS_NAME}
+  PedidosTableName: ${self:custom.common.provider.environment.PEDIDOS_TABLE}
+  UsersTableName: ${self:custom.common.provider.environment.USERS_TABLE}
+  UniversalRelayArn: ${self:custom.common.provider.environment.UNIVERSAL_RELAY_ARN}
+
 # 3. PLUGINS (Se deben listar explícitamente en cada servicio)
 plugins:
-  - serverless-esbuild
+  - serverless-step-functions
   - serverless-dotenv-plugin
 
 # 4. PROVIDER (Heredamos todo del common)
@@ -24,14 +30,117 @@ provider:
   name: ${self:custom.common.provider.name}
   runtime: ${self:custom.common.provider.runtime}
   region: ${self:custom.common.provider.region}
-  stage: ${self:custom.common.provider.stage}
+  stage: ${opt:stage, 'dev'}
   memorySize: ${self:custom.common.provider.memorySize}
   timeout: ${self:custom.common.provider.timeout}
   
   # Heredamos el Rol dinámico (se resuelve con el .env cargado arriba)
-  role: ${self:custom.common.provider.role}
+  iam: ${self:custom.common.provider.iam}
 
-  # Heredamos variables de entorno globales (EventBus, etc.)
-  environment: ${self:custom.common.provider.environment}
+  # Variables de entorno
+  environment:
+    EVENT_BUS_NAME: ${self:custom.EventBusName}
+    PEDIDOS_TABLE: ${self:custom.PedidosTableName}
+    USERS_TABLE: ${self:custom.UsersTableName}
 
 # 5. Insfractructura especifica del servicio
+stepFunctions:
+  stateMachines:
+    OrderFlow:
+      name: ms-order-${self:provider.stage}
+      type: STANDARD
+      role: ${self:custom.common.provider.iam.role}
+      
+      definition: ${file(ms-order.asl.json)}
+
+      loggingConfig:
+        level: ALL
+        includeExecutionData: true
+        destinations:
+          - !GetAtt OrderLogGroup.Arn
+
+      tracingConfig:
+        enabled: true
+      
+      events:
+        # -----------------------------------------------------------
+        # REGLA 1: ACCESO AUTORIZADO (CLIENTES LOGUEADOS)
+        # Solo procesamos si existe 'userId' en la metadata
+        # -----------------------------------------------------------
+        - eventBridge:
+            eventBusName: ${self:custom.EventBusName}
+            iamRole: ${self:custom.common.provider.iam.role}
+            event:
+              source: ["app.websocket.inbound"]
+              detail-type:
+                - "Carrito.AgregarItem"
+                - "Carrito.EliminarItem"
+                - "Carrito.Vaciar"
+                - "Carrito.Obtener"
+                - "Pedido.Checkout"
+                - "Pedido.Historial"
+                - "Pedido.Cancelar"
+              detail:
+                meta:
+                  role: ["CLIENTE"] # <--- EL CANDADO DE SEGURIDAD
+
+# 6. RECURSOS ADICIONALES Y REGLAS "ELSE"
+resources:
+  Resources:
+    # Log Group para la Step Function
+    OrderLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/vendedlogs/states/cw-order-ms-${self:provider.stage}
+        RetentionInDays: 7
+
+    # -----------------------------------------------------------
+    # REGLA DE SEGURIDAD "ELSE" (ACCESO DENEGADO / ANÓNIMO)
+    # Si alguien intenta comprar sin estar logueado (sin userId)
+    # -----------------------------------------------------------
+    RuleOrderAccessDenied:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: RuleOrderAccessDenied-${self:provider.stage}
+        EventBusName: ${self:custom.EventBusName}
+        EventPattern:
+          source: ["app.websocket.inbound"]
+          detail-type:
+            - "Carrito.AgregarItem"
+            - "Carrito.EliminarItem"
+            - "Carrito.Vaciar"
+            - "Carrito.Obtener"
+            - "Pedido.Checkout"
+            - "Pedido.Historial"
+            - "Pedido.Cancelar"
+          detail:
+            meta:
+              role: 
+                - "anything-but": "CLIENTE"
+        Targets:
+          - Id: RelayToBusDenied
+            Arn: ${self:custom.UniversalRelayArn}
+            # Transformamos el evento en un Toast de Error para el Frontend
+            InputTransformer:
+              InputPathsMap:
+                connId: "$.detail.meta.connectionId"
+                reqId: "$.detail.meta.correlationId"
+              InputTemplate: |
+                {
+                  "Source": "app.security",
+                  "DetailType": "Security.AccessDenied",
+                  "Detail": {
+                    "meta": {
+                      "scope": "NOTIFICATION",
+                      "targetType": "CONNECTION",
+                      "targetId": <connId>,
+                      "correlationId": <reqId>
+                    },
+                    "ui": {
+                      "action": "SHOW_TOAST", 
+                      "variant": "ERROR",
+                      "message": "⛔ Debes iniciar sesión para realizar esta acción."
+                    },
+                    "data": { "reason": "LOGIN_REQUIRED" }
+                  }
+                }

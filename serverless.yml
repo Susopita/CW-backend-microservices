@@ -72,7 +72,20 @@ functions:
           route: Auth.RegisterCliente
       - websocket:
           route: Auth.RegisterManager
-
+      - websocket:
+          route: Carrito.AgregarItem
+      - websocket:
+          route: Carrito.EliminarItem
+      - websocket:
+          route: Carrito.Vaciar
+      - websocket:
+          route: Carrito.Obtener
+      - websocket:
+          route: Pedido.Checkout
+      - websocket:
+          route: Pedido.Historial
+      - websocket:
+          route: Pedido.Cancelar
 resources:
   Resources:
     # ---------------------------------------------------

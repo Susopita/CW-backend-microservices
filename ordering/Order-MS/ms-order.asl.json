@@ -1,5 +1,5 @@
 {
-    "Comment": "A description of my state machine",
+    "Comment": "Orquestador de Pedidos: Carrito, SAGA Checkout, Historial y Cancelación",
     "StartAt": "Preparar Contexto",
     "States": {
         "Preparar Contexto": {
@@ -31,6 +31,10 @@
                     "Next": "Carrito: Vaciar Completo"
                 },
                 {
+                    "Condition": "{% $eventType = 'Carrito.Obtener' %}",
+                    "Next": "Carrito: Obtener"
+                },
+                {
                     "Condition": "{% $eventType = 'Pedido.Checkout' %}",
                     "Next": "Checkout: Obtener Carrito"
                 },
@@ -58,13 +62,17 @@
                         "S": "CART"
                     }
                 },
-                "UpdateExpression": "SET items.#id = :attrs, updatedAt = :now, expiracion = :ttl",
+                "UpdateExpression": "SET #items.#itemId = :attrs, updatedAt = :now, expiracion = :ttl",
                 "ExpressionAttributeNames": {
-                    "#id": "{% $inputData.product.sku %}"
+                    "#items": "items",
+                    "#itemId": "{% $inputData.product.itemId %}"
                 },
                 "ExpressionAttributeValues": {
                     ":attrs": {
                         "M": {
+                            "sku": {
+                                "S": "{% $inputData.product.sku %}"
+                            },
                             "nombre": {
                                 "S": "{% $inputData.product.name %}"
                             },
@@ -90,12 +98,48 @@
                     }
                 }
             },
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "DynamoDB.AmazonDynamoDBException"
+                    ],
+                    "Next": "Carrito: Inicializar"
+                }
+            ],
             "End": true
+        },
+        "Carrito: Inicializar": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Comment": "Crea el mapa 'items' vacío si no existe",
+            "Arguments": {
+                "TableName": "${self:custom.UsersTableName}",
+                "Key": {
+                    "user_id": {
+                        "S": "{% 'USER#' & $userId %}"
+                    },
+                    "entity": {
+                        "S": "CART"
+                    }
+                },
+                "UpdateExpression": "SET #items = if_not_exists(#items, :emptyMap), updatedAt = :now",
+                "ExpressionAttributeNames": {
+                    "#items": "items"
+                },
+                "ExpressionAttributeValues": {
+                    ":emptyMap": {
+                        "M": {}
+                    },
+                    ":now": {
+                        "S": "{% $now() %}"
+                    }
+                }
+            },
+            "Next": "Carrito: Upsert Item"
         },
         "Carrito: Eliminar Item": {
             "Type": "Task",
             "Resource": "arn:aws:states:::dynamodb:updateItem",
-            "Comment": "Elimina una llave específica del mapa de items",
             "Arguments": {
                 "TableName": "{% $usersTable %}",
                 "Key": {
@@ -106,13 +150,14 @@
                         "S": "CART"
                     }
                 },
-                "UpdateExpression": "REMOVE items.#sku SET updatedAt = :now",
+                "UpdateExpression": "REMOVE #items.#itemId SET updatedAt = :now",
                 "ExpressionAttributeNames": {
-                    "#sku": "{% $inputData.skuToRemove %}"
+                    "#items": "items",
+                    "#itemId": "{% $inputData.itemIdToRemove %}"
                 },
                 "ExpressionAttributeValues": {
                     ":now": {
-                        "S": "{% $now() %}"
+                        "S": "{% $now %}"
                     }
                 }
             },
@@ -120,7 +165,33 @@
         },
         "Carrito: Vaciar Completo": {
             "Type": "Task",
-            "Resource": "arn:aws:states:::dynamodb:deleteItem",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
+            "Comment": "No borra el registro del usuario, solo limpia el mapa de items",
+            "Arguments": {
+                "TableName": "{% $usersTable %}",
+                "Key": {
+                    "user_id": {
+                        "S": "{% 'USER#' & $userId %}"
+                    },
+                    "entity": {
+                        "S": "CART"
+                    }
+                },
+                "UpdateExpression": "REMOVE #items SET updatedAt = :now",
+                "ExpressionAttributeNames": {
+                    "#items": "items"
+                },
+                "ExpressionAttributeValues": {
+                    ":now": {
+                        "S": "{% $now %}"
+                    }
+                }
+            },
+            "End": true
+        },
+        "Carrito: Obtener": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:getItem",
             "Arguments": {
                 "TableName": "{% $usersTable %}",
                 "Key": {
@@ -131,6 +202,24 @@
                         "S": "CART"
                     }
                 }
+            },
+            "Assign": {
+                "cartItems": "{% $states.result.Item.items.M ? $states.result.Item.items.M ~> $each(function($v, $k) { { 'itemId': $k, 'sku': $v.M.sku.S, 'nombre': $v.M.nombre.S, 'precio': $number($v.M.precio.N), 'cantidad': $number($v.M.cantidad.N), 'img': $v.M.img.S, 'opciones': $v.M.opciones.S } }) : [] %}"
+            },
+            "Next": "Carrito: Notificar Estado"
+        },
+        "Carrito: Notificar Estado": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::events:putEvents",
+            "Arguments": {
+                "Entries": [
+                    {
+                        "Source": "app.orders",
+                        "DetailType": "Carrito.Estado",
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({ \"meta\": $merge([$meta, { \"scope\": \"NOTIFICATION\", \"targetType\": \"CONNECTION\", \"targetId\": $meta.connectionId }]), \"data\": { \"items\": $cartItems } }) %}"
+                    }
+                ]
             },
             "End": true
         },
@@ -239,7 +328,7 @@
             },
             "Assign": {
                 "cart": "{% $states.result.Item %}",
-                "orderId": "{% 'ORD-' & $uuid() %}"
+                "orderId": "{% 'Pedido#' & $uuid() %}"
             },
             "Next": "Checkout: Validar"
         },
@@ -276,9 +365,29 @@
                     },
                     "items": "{% $cart.items %}",
                     "total": {
-                        "N": "100.00"
+                        "N": "{% $string($sum($map($cart.items.M, function($v) { $v.precio.N * $v.cantidad.N }))) %}"
+                    },
+                    "Historial": {
+                        "L": [
+                            {
+                                "M": {
+                                    "estado": {
+                                        "S": "PENDING"
+                                    },
+                                    "timestamp": {
+                                        "S": "{% $now %}"
+                                    },
+                                    "actor": {
+                                        "S": "SYSTEM"
+                                    }
+                                }
+                            }
+                        ]
                     }
                 }
+            },
+            "Assign": {
+                "totalCalculado": "{% $sum($map($cart.items.M, function($v) { $v.precio.N * $v.cantidad.N })) %}"
             },
             "Next": "SAGA: Reservar Inventario"
         },
@@ -317,7 +426,7 @@
                         "Source": "app.orders",
                         "DetailType": "Payment.Initiate",
                         "EventBusName": "{% $busName %}",
-                        "Detail": "{% $string({ \"meta\": $meta, \"data\": { \"orderId\": $orderId, \"amount\": 100.00, \"paymentToken\": $inputData.paymentToken, \"myTaskToken\": $states.context.Task.Token } }) %}"
+                        "Detail": "{% $string({ \"meta\": $meta, \"data\": { \"orderId\": $orderId, \"amount\": $totalCalculado, \"paymentToken\": $inputData.paymentToken, \"myTaskToken\": $states.context.Task.Token } }) %}"
                     }
                 ]
             },
@@ -352,13 +461,31 @@
                                         "S": "METADATA"
                                     }
                                 },
-                                "UpdateExpression": "SET #s = :s",
+                                "UpdateExpression": "SET #s = :s, #h = list_append(#h, :newH)",
                                 "ExpressionAttributeNames": {
-                                    "#s": "status"
+                                    "#s": "status",
+                                    "#h": "Historial"
                                 },
                                 "ExpressionAttributeValues": {
                                     ":s": {
                                         "S": "PAID"
+                                    },
+                                    ":newH": {
+                                        "L": [
+                                            {
+                                                "M": {
+                                                    "estado": {
+                                                        "S": "PAID"
+                                                    },
+                                                    "timestamp": {
+                                                        "S": "{% $now %}"
+                                                    },
+                                                    "actor": {
+                                                        "S": "SYSTEM"
+                                                    }
+                                                }
+                                            }
+                                        ]
                                     }
                                 }
                             },
@@ -367,11 +494,11 @@
                     }
                 },
                 {
-                    "StartAt": "DB: Borrar Carrito",
+                    "StartAt": "DB: Vaciar Carrito",
                     "States": {
-                        "DB: Borrar Carrito": {
+                        "DB: Vaciar Carrito": {
                             "Type": "Task",
-                            "Resource": "arn:aws:states:::dynamodb:deleteItem",
+                            "Resource": "arn:aws:states:::dynamodb:updateItem",
                             "Arguments": {
                                 "TableName": "{% $usersTable %}",
                                 "Key": {
@@ -380,6 +507,12 @@
                                     },
                                     "entity": {
                                         "S": "CART"
+                                    }
+                                },
+                                "UpdateExpression": "REMOVE items SET updatedAt = :now",
+                                "ExpressionAttributeValues": {
+                                    ":now": {
+                                        "S": "{% $now %}"
                                     }
                                 }
                             },
@@ -399,7 +532,28 @@
                                         "Source": "app.orders",
                                         "DetailType": "Pedido.CreadoExito",
                                         "EventBusName": "{% $busName %}",
-                                        "Detail": "{% $string({ \"meta\": $merge([\n              $meta,{\n                \"scope\": \"NOTIFICATION\",\n                \"targetType\": \"USER\",\n                \"targetId\": $meta.userId\n              }]), \"data\": { \"orderId\": $orderId, \"status\": \"CONFIRMED\" } }) %}"
+                                        "Detail": "{% $string({ \"meta\": $merge([$meta, { \"scope\": \"NOTIFICATION\", \"targetType\": \"USER\", \"targetId\": $userId }]), \"ui\": { \"action\": \"REDIRECT\", \"target\": \"/orders/\" & $orderId, \"variant\": \"SUCCESS\", \"message\": \"Pedido Confirmado\" }, \"data\": { \"orderId\": $orderId, \"status\": \"CONFIRMED\" } }) %}"
+                                    }
+                                ]
+                            },
+                            "End": true
+                        }
+                    }
+                },
+                {
+                    "StartAt": "Evento: Pedido Creado (Backend)",
+                    "States": {
+                        "Evento: Pedido Creado (Backend)": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::events:putEvents",
+                            "Comment": "Avisa a Delivery para que empiece a buscar cocinero",
+                            "Arguments": {
+                                "Entries": [
+                                    {
+                                        "Source": "app.orders",
+                                        "DetailType": "Pedido.PagoConfirmado",
+                                        "EventBusName": "{% $busName %}",
+                                        "Detail": "{% $string({ \"meta\": $meta, \"data\": { \"orderId\": $orderId, \"sucursalId\": $inputData.sucursal, \"items\": $cart.items.M } }) %}"
                                     }
                                 ]
                             },
@@ -422,13 +576,31 @@
                         "S": "METADATA"
                     }
                 },
-                "UpdateExpression": "SET #s = :s",
+                "UpdateExpression": "SET #s = :s, #h = list_append(#h, :newH)",
                 "ExpressionAttributeNames": {
-                    "#s": "status"
+                    "#s": "status",
+                    "#h": "Historial"
                 },
                 "ExpressionAttributeValues": {
                     ":s": {
                         "S": "FAILED_STOCK"
+                    },
+                    ":newH": {
+                        "L": [
+                            {
+                                "M": {
+                                    "estado": {
+                                        "S": "FAILED_STOCK"
+                                    },
+                                    "timestamp": {
+                                        "S": "{% $now %}"
+                                    },
+                                    "motivo": {
+                                        "S": "Sin stock disponible"
+                                    }
+                                }
+                            }
+                        ]
                     }
                 }
             },
@@ -437,7 +609,6 @@
         "SAGA: Fallo Pago (Rollback Stock)": {
             "Type": "Task",
             "Resource": "arn:aws:states:::events:putEvents",
-            "Comment": "Evento que Inventario escuchará para devolver los items",
             "Arguments": {
                 "Entries": [
                     {
@@ -463,13 +634,31 @@
                         "S": "METADATA"
                     }
                 },
-                "UpdateExpression": "SET #s = :s",
+                "UpdateExpression": "SET #s = :s, #h = list_append(#h, :newH)",
                 "ExpressionAttributeNames": {
-                    "#s": "status"
+                    "#s": "status",
+                    "#h": "Historial"
                 },
                 "ExpressionAttributeValues": {
                     ":s": {
                         "S": "FAILED_PAYMENT"
+                    },
+                    ":newH": {
+                        "L": [
+                            {
+                                "M": {
+                                    "estado": {
+                                        "S": "FAILED_PAYMENT"
+                                    },
+                                    "timestamp": {
+                                        "S": "{% $now %}"
+                                    },
+                                    "motivo": {
+                                        "S": "Pago rechazado"
+                                    }
+                                }
+                            }
+                        ]
                     }
                 }
             },

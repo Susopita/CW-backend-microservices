@@ -8,12 +8,38 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# =========================================================================
+# 0. CARGAR VARIABLES DE ENTORNO (.ENV)
+# =========================================================================
+# Buscamos el archivo .env en el directorio actual o uno arriba
+if [ -f .env ]; then
+  echo -e "${YELLOW}Cargando configuración desde .env local...${NC}"
+  export $(grep -v '^#' .env | xargs)
+elif [ -f ../.env ]; then
+  echo -e "${YELLOW}Cargando configuración desde ../.env ...${NC}"
+  export $(grep -v '^#' ../.env | xargs)
+else
+  echo -e "${YELLOW}No se encontró archivo .env, usando valores por defecto.${NC}"
+fi
+
+# Variables de configuración con valores por defecto (fallback)
 STAGE="${STAGE:-dev}"
 SUCURSAL="sucursal-001"
+REGION="${REGION:-us-east-1}"
 
 echo -e "${BLUE}════════════════════════════════════════════${NC}"
-echo -e "${BLUE}  Poblando DynamoDB - Microservicio Delivery${NC}"
+echo -e "${BLUE}  Poblando DynamoDB - Microservicio Delivery - ${YELLOW}${STAGE}${BLUE}${NC}"
 echo -e "${BLUE}════════════════════════════════════════════${NC}\n"
+
+# =========================================================================
+# 0. VALIDAR CREDENCIALES AWS
+# =========================================================================
+# Verificamos si tenemos acceso a AWS antes de intentar nada
+if ! aws sts get-caller-identity &>/dev/null; then
+  echo -e "${RED}ERROR CRÍTICO: No se detectaron credenciales de AWS activas.${NC}"
+  echo -e "${YELLOW}Por favor, copia y pega las credenciales de AWS Academy en tu terminal antes de correr este script.${NC}"
+  exit 1
+fi
 
 # =========================================================================
 # 1. VALIDAR QUE LAS TABLAS EXISTAN
@@ -39,6 +65,7 @@ echo -e "${BLUE}Creando COCINEROS...${NC}\n"
 # Cocinero 001
 if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
+  --region "${REGION}" \
   --item '{
     "user_id": {"S": "USER#cocinero-001"},
     "entity": {"S": "PROFILE"},
@@ -55,6 +82,7 @@ fi
 # Cocinero 002
 if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
+  --region "${REGION}" \
   --item '{
     "user_id": {"S": "USER#cocinero-002"},
     "entity": {"S": "PROFILE"},
@@ -75,6 +103,7 @@ echo -e "\n${BLUE}Creando DESPACHADORES...${NC}\n"
 # Despachador 001
 if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
+  --region "${REGION}" \
   --item '{
     "user_id": {"S": "USER#despachador-001"},
     "entity": {"S": "PROFILE"},
@@ -90,6 +119,7 @@ fi
 # Despachador 002
 if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
+  --region "${REGION}" \
   --item '{
     "user_id": {"S": "USER#despachador-002"},
     "entity": {"S": "PROFILE"},
@@ -110,6 +140,7 @@ echo -e "\n${BLUE}Creando REPARTIDORES...${NC}\n"
 # Repartidor 001
 if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
+  --region "${REGION}" \
   --item '{
     "user_id": {"S": "USER#repartidor-001"},
     "entity": {"S": "PROFILE"},
@@ -125,6 +156,7 @@ fi
 # Repartidor 002
 if aws dynamodb put-item \
   --table-name "cw-usuarios-${STAGE}" \
+  --region "${REGION}" \
   --item '{
     "user_id": {"S": "USER#repartidor-002"},
     "entity": {"S": "PROFILE"},
@@ -144,10 +176,11 @@ echo -e "\n${BLUE}Creando PEDIDOS de prueba...${NC}\n"
 
 ORDER_ID="ORD-TEST-$(date +%s)"
 CUSTOMER_ID="USER#customer-test-001"
-EMAIL="test@chinawok.com"
+EMAIL="${TEST_EMAIL:-"test@chinawok.com"}"
 
 if aws dynamodb put-item \
   --table-name "cw-pedidos-${STAGE}" \
+  --region "${REGION}" \
   --item '{
     "pedido_id": {"S": "Pedido#'${ORDER_ID}'"},
     "entity": {"S": "METADATA"},
@@ -173,7 +206,8 @@ echo -e "${BLUE}═════════════════════�
 echo -e "${YELLOW}Estructura de cw-usuarios-${STAGE}:${NC}"
 aws dynamodb describe-table \
   --table-name "cw-usuarios-${STAGE}" \
-  --query 'Table.[KeySchema, AttributeDefinitions, GlobalSecondaryIndexes[0].[IndexName, KeySchema]]' \
+  --region "${REGION}" \
+  --query 'Table.{Claves: KeySchema, Indices: GlobalSecondaryIndexes[*].IndexName}' \
   --output table
 
 # =========================================================================
@@ -186,6 +220,7 @@ echo -e "${BLUE}═════════════════════�
 echo -e "${GREEN}COCINEROS DISPONIBLES:${NC}\n"
 aws dynamodb query \
   --table-name "cw-usuarios-${STAGE}" \
+  --region "${REGION}" \
   --index-name TenantRoleIndex \
   --key-condition-expression "tenant_context = :tc AND #role = :role" \
   --expression-attribute-names '{"#role": "Role"}' \
@@ -199,6 +234,7 @@ aws dynamodb query \
 echo -e "\n${GREEN}DESPACHADORES DISPONIBLES:${NC}\n"
 aws dynamodb query \
   --table-name "cw-usuarios-${STAGE}" \
+  --region "${REGION}" \
   --index-name TenantRoleIndex \
   --key-condition-expression "tenant_context = :tc AND #role = :role" \
   --expression-attribute-names '{"#role": "Role"}' \
@@ -212,6 +248,7 @@ aws dynamodb query \
 echo -e "\n${GREEN}REPARTIDORES DISPONIBLES:${NC}\n"
 aws dynamodb query \
   --table-name "cw-usuarios-${STAGE}" \
+  --region "${REGION}" \
   --index-name TenantRoleIndex \
   --key-condition-expression "tenant_context = :tc AND #role = :role" \
   --expression-attribute-names '{"#role": "Role"}' \
@@ -231,6 +268,7 @@ echo -e "${BLUE}═════════════════════�
 
 aws dynamodb query \
   --table-name "cw-pedidos-${STAGE}" \
+  --region "${REGION}" \
   --key-condition-expression "pedido_id = :pid" \
   --expression-attribute-values '{
     ":pid": {"S": "Pedido#'${ORDER_ID}'"}

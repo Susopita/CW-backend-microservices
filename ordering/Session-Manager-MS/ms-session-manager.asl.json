@@ -32,11 +32,116 @@
                     "Next": "Registrar Managers"
                 },
                 {
+                    "Next": "Obtener Perfil DB",
+                    "Condition": "{% $eventType = 'Profile.Obtener' %}",
+                    "Comment": "Rama exclusiva para lectura"
+                },
+                {
+                    "Next": "Leer Perfil para Editar",
+                    "Condition": "{% $eventType = 'Profile.Editar' %}",
+                    "Comment": "Rama exclusiva para escritura (Read-Modify-Write)"
+                },
+                {
                     "Next": "Refresh TTL de conexion",
                     "Condition": "{% $eventType = 'System.Ping' %}",
                     "Comment": "Esta ruta sirve para hacer Pong y que reinicie el ttl de la conexion"
                 }
             ]
+        },
+        "Leer Perfil para Editar": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:getItem",
+            "Comment": "Leemos primero para no sobrescribir datos que no se enviaron",
+            "Arguments": {
+                "TableName": "${self:custom.UsersTableName}",
+                "Key": {
+                    "user_id": {
+                        "S": "{% $meta.userId %}"
+                    },
+                    "entity": {
+                        "S": "PROFILE"
+                    }
+                }
+            },
+            "Next": "Guardar Cambios del Perfil",
+            "Assign": {
+                "fullProfileItem": "{% $states.result.Item %}",
+                "existingAttributes": "{% $states.result.Item.atributos.M %}"
+            }
+        },
+        "Guardar Cambios del Perfil": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:putItem",
+            "Arguments": {
+                "TableName": "${self:custom.UsersTableName}",
+                "Item": {
+                    "user_id": {
+                        "S": "{% $fullProfileItem.user_id.S %}"
+                    },
+                    "entity": {
+                        "S": "{% $fullProfileItem.entity.S %}"
+                    },
+                    "tenant_context": {
+                        "S": "{% $fullProfileItem.tenant_context.S %}"
+                    },
+                    "Role": {
+                        "S": "{% $fullProfileItem.Role.S %}"
+                    },
+                    "atributos": {
+                        "M": "{% $merge([$existingAttributes, $inputData]) %}"
+                    }
+                }
+            },
+            "Next": "Confirmar Edicion"
+        },
+        "Confirmar Edicion": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::events:putEvents",
+            "Arguments": {
+                "Entries": [
+                    {
+                        "Source": "app.session",
+                        "DetailType": "Profile.ConfirmacionEdicion",
+                        "EventBusName": "${self:custom.EventBusName}",
+                        "Detail": "{% $string({ \n  \"meta\": $merge([\n    $meta,{\n      \"scope\": \"NOTIFICATION\",\n      \"targetType\": \"CONNECTION\",\n      \"targetId\": $connectionId\n    }\n  ]),\n  \"ui\": { \n    \"action\": \"SHOW_TOAST\", \n    \"variant\": \"SUCCESS\", \n    \"message\": \"Perfil actualizado exitosamente\" \n  }\n}) %}"
+                    }
+                ]
+            },
+            "End": true
+        },
+        "Obtener Perfil DB": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::dynamodb:getItem",
+            "Arguments": {
+                "TableName": "${self:custom.UsersTableName}",
+                "Key": {
+                    "user_id": {
+                        "S": "{% $meta.userId %}"
+                    },
+                    "entity": {
+                        "S": "PROFILE"
+                    }
+                }
+            },
+            "Next": "Responder con Datos del Perfil",
+            "Assign": {
+                "dbAttributes": "{% $states.result.Item.atributos.M %}"
+            }
+        },
+        "Responder con Datos del Perfil": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::events:putEvents",
+            "Arguments": {
+                "Entries": [
+                    {
+                        "Source": "app.session",
+                        "DetailType": "Profile.Respuesta",
+                        "EventBusName": "${self:custom.EventBusName}",
+                        "Detail": "{% $string({ \n  \"meta\": $merge([\n    $meta,{\n      \"scope\": \"NOTIFICATION\",\n      \"targetType\": \"CONNECTION\",\n      \"targetId\": $connectionId\n    }\n  ]),\n  \"ui\": { \n    \"action\": \"HYDRATE\", \n    \"target\": \"profile_store\", \n    \"variant\": \"SUCCESS\", \n    \"message\": \"Perfil cargado\" \n  },\n  \"data\": $dbAttributes \n}) %}"
+                    }
+                ]
+            },
+            "End": true
         },
         "Registrar Managers": {
             "Type": "Task",
@@ -150,9 +255,21 @@
                 "Username": "{% $inputData.email %}"
             },
             "Resource": "arn:aws:states:::aws-sdk:cognitoidentityprovider:adminListGroupsForUser",
-            "Next": "Es Cliente?",
+            "Next": "Obtener UUID Cliente",
             "Assign": {
                 "groups": "{% $states.result.Groups.GroupName %}"
+            }
+        },
+        "Obtener UUID Cliente": {
+            "Type": "Task",
+            "Arguments": {
+                "UserPoolId": "${self:custom.UserPoolId}",
+                "Username": "{% $inputData.email %}"
+            },
+            "Resource": "arn:aws:states:::aws-sdk:cognitoidentityprovider:adminGetUser",
+            "Next": "Es Cliente?",
+            "Assign": {
+                "clientUuid": "{% $states.result.Username %}"
             }
         },
         "Es Cliente?": {
@@ -181,7 +298,7 @@
                 },
                 "ExpressionAttributeValues": {
                     ":uid": {
-                        "S": "{% 'USER#' & $inputData.email %}"
+                        "S": "{% 'USER#' & $clientUuid %}"
                     },
                     ":role": {
                         "S": "CLIENTE"

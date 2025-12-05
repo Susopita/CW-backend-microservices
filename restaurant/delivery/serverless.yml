@@ -17,9 +17,9 @@ custom:
   esbuild: ${self:custom.common.custom.esbuild}
 
   # Recursos compartidos
-  UsuariosTableName: ${self.custom.common.provider.environment.USERS_TABLE}
-  PedidosTableName: ${self.custom.common.provider.environment.PEDIDOS_TABLE}
-  EventBusName: ${self.custom.common.provider.environment.EVENT_BUS_NAME}
+  UsuariosTableName: ${self:custom.common.provider.environment.USERS_TABLE}
+  PedidosTableName: ${self:custom.common.provider.environment.PEDIDOS_TABLE}
+  EventBusName: ${self:custom.common.provider.environment.EVENT_BUS_NAME}
 
 # ==========================================================
 # 2. PLUGINS
@@ -78,85 +78,62 @@ stepFunctions:
       tracingConfig:
         enabled: true
 
+      # --- NUEVA SECCIÓN DE EVENTOS (Reemplaza a Resources) ---
+      events:
+        # REGLA 1: Pago Confirmado -> Inicia
+        - eventBridge:
+            eventBusName: ${self:custom.EventBusName}
+            iamRole: ${self:custom.common.provider.iam.role}
+            event:
+              source: 
+                - "app.payment" 
+                - "payment.service" 
+              detail-type:
+                - "PagoConfirmado"
+
+        # REGLA 2: Comida Preparada -> Busca motorizado
+        - eventBridge:
+            eventBusName: ${self:custom.EventBusName}
+            iamRole: ${self:custom.common.provider.iam.role}
+            event:
+              source: 
+                - "app.kitchen"
+                - "kitchen.service"
+              detail-type:
+                - "ComidaPreparada"
+
+        # REGLA 3: Despachado -> Busca repartidor
+        - eventBridge:
+            eventBusName: ${self:custom.EventBusName}
+            iamRole: ${self:custom.common.provider.iam.role}
+            event:
+              source: 
+                - "app.packing"
+                - "packing.service"
+              detail-type:
+                - "Despachado"
+
+        # REGLA 4: Entregado -> Finaliza
+        - eventBridge:
+            eventBusName: ${self:custom.EventBusName}
+            iamRole: ${self:custom.common.provider.iam.role}
+            event:
+              source: 
+                - "app.driver"
+                - "driver.service"
+              detail-type:
+                - "Entregado"
+
 # ==========================================================
-# 6. RESOURCES - EventBridge Rules + DynamoDB
+# 6. RESOURCES - EventBridge Rules
 # ==========================================================
 resources:
   Resources:
-    # Log Group para Step Functions
     DeliveryLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:
         LogGroupName: /aws/vendedlogs/states/cw-delivery-ms-${self:provider.stage}
         RetentionInDays: 7
-
-    # REGLA 1: PagoConfirmado
-    PagoConfirmadoRule:
-      Type: AWS::Events::Rule
-      Properties:
-        Name: ms-delivery-${self:provider.stage}-PagoConfirmado
-        EventBusName: ${self:custom.EventBusName}
-        State: ENABLED
-        EventPattern:
-          source:
-            - payment.service
-          detail-type:
-            - PagoConfirmado
-        Targets:
-          - Arn: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:ms-delivery-${self:provider.stage}"
-            RoleArn: ${self:custom.common.provider.iam.role}
-            Id: delivery-pago-confirmado
-
-    # REGLA 2: ComidaPreparada
-    ComidaPreparadaRule:
-      Type: AWS::Events::Rule
-      Properties:
-        Name: ms-delivery-${self:provider.stage}-ComidaPreparada
-        EventBusName: ${self:custom.EventBusName}
-        State: ENABLED
-        EventPattern:
-          source:
-            - kitchen.service
-          detail-type:
-            - ComidaPreparada
-        Targets:
-          - Arn: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:ms-delivery-${self:provider.stage}"
-            RoleArn: ${self:custom.common.provider.iam.role}
-            Id: delivery-comida-preparada
-
-    # REGLA 3: Despachado
-    DespachadoRule:
-      Type: AWS::Events::Rule
-      Properties:
-        Name: ms-delivery-${self:provider.stage}-Despachado
-        EventBusName: ${self:custom.EventBusName}
-        State: ENABLED
-        EventPattern:
-          source:
-            - packing.service
-          detail-type:
-            - Despachado
-        Targets:
-          - Arn: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:ms-delivery-${self:provider.stage}"
-            RoleArn: ${self:custom.common.provider.iam.role}
-            Id: delivery-despachado
-
-    # REGLA 4: Entregado
-    EntregadoRule:
-      Type: AWS::Events::Rule
-      Properties:
-        Name: ms-delivery-${self:provider.stage}-Entregado
-        EventBusName: ${self:custom.EventBusName}
-        State: ENABLED
-        EventPattern:
-          source:
-            - driver.service
-          detail-type:
-            - Entregado
-        Targets:
-          - Arn: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:ms-delivery-${self:provider.stage}"
-            RoleArn: ${self:custom.common.provider.iam.role}
-            Id: delivery-entregado
 
   # ==========================================================
   # OUTPUTS

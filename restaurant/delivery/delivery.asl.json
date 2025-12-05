@@ -1,26 +1,33 @@
 {
     "Comment": "Microservicio Delivery - Event-driven con formato estandarizado de notificaciones",
     "QueryLanguage": "JSONata",
-    "StartAt": "IdentificarTipoEvento",
+    "StartAt": "Preparar Contexto",
     "States": {
+        "Preparar Contexto": {
+            "Type": "Pass",
+            "Next": "IdentificarTipoEvento",
+            "Assign": {
+                "eventType": "{% $states.input.'detail-type' %}"
+            }
+        },
         "IdentificarTipoEvento": {
             "Type": "Choice",
             "Comment": "Enruta según el tipo de evento recibido",
             "Choices": [
                 {
-                    "Condition": "{% $states.input['detail-type'] = 'PagoConfirmado' %}",
+                    "Condition": "{% $eventType = 'PagoConfirmado' %}",
                     "Next": "BuscarCocineroDisponible"
                 },
                 {
-                    "Condition": "{% $states.input['detail-type'] = 'ComidaPreparada' %}",
+                    "Condition": "{% $eventType = 'ComidaPreparada' %}",
                     "Next": "BuscarDespachadorDisponible"
                 },
                 {
-                    "Condition": "{% $states.input['detail-type'] = 'Despachado' %}",
+                    "Condition": "{% $eventType = 'Despachado' %}",
                     "Next": "BuscarRepartidorDisponible"
                 },
                 {
-                    "Condition": "{% $states.input['detail-type'] = 'Entregado' %}",
+                    "Condition": "{% $eventType = 'Entregado' %}",
                     "Next": "ActualizarPedidoEntregado"
                 }
             ],
@@ -31,10 +38,10 @@
             "Comment": "Busca un cocinero disponible usando GSI tenant_context + Role",
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
             "Arguments": {
-                "TableName": "${UsuariosTableName}",
+                "TableName": "${self:custom.UsuariosTableName}",
                 "IndexName": "TenantRoleIndex",
                 "KeyConditionExpression": "tenant_context = :tenantContext AND #role = :role",
-                "FilterExpression": "attribute_exists(atributos) AND contains(atributos, :activo)",
+                "FilterExpression": "contains(atributos, :act1) OR contains(atributos, :act2)",
                 "ExpressionAttributeNames": {
                     "#role": "Role"
                 },
@@ -45,13 +52,16 @@
                     ":role": {
                         "S": "COCINERO"
                     },
-                    ":activo": {
+                    ":act1": {
                         "S": "\"activo\":true"
+                    },
+                    ":act2": {
+                        "S": "\"activo\": true"
                     }
                 },
                 "Limit": 1
             },
-            "Output": "{% $states.input.detail ? {'orderId': $states.input.detail.orderId, 'sucursalId': $states.input.detail.sucursalId, 'customerId': $states.input.detail.customerId, 'customerEmail': $states.input.detail.customerEmail, 'correlationId': $states.input.detail.correlationId ? $states.input.detail.correlationId : $uuid(), 'cocinero': $states.result.Items[0] ? {'userId': $states.result.Items[0].user_id.S, 'nombre': $eval($states.result.Items[0].atributos.S).nombre} : null} : {'cocinero': null} %}",
+            "Output": "{% ($selected := $states.result.Items[0]; $rawName := $selected ? $split($split($selected.atributos.S, '\"nombre\": \"')[1], '\"')[0] : 'Cocinero'; $states.input.detail ? {'orderId': $states.input.detail.orderId, 'sucursalId': $states.input.detail.sucursalId, 'customerId': $states.input.detail.customerId, 'customerEmail': $states.input.detail.customerEmail, 'correlationId': $states.input.detail.correlationId ? $states.input.detail.correlationId : $uuid(), 'cocinero': $selected ? {'userId': $selected.user_id.S, 'nombre': $rawName} : null} : {'cocinero': null}) %}",
             "Next": "ValidarCocineroEncontrado"
         },
         "ValidarCocineroEncontrado": {
@@ -66,33 +76,43 @@
         },
         "AsignarCocineroAlPedido": {
             "Type": "Task",
-            "Comment": "Crea registro con entity=EnPreparacion",
-            "Resource": "arn:aws:states:::dynamodb:putItem",
+            "Comment": "Actualiza el pedido: Agrega al historial y actualiza estado",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
             "Arguments": {
-                "TableName": "${PedidosTableName}",
-                "Item": {
+                "TableName": "${self:custom.PedidosTableName}",
+                "Key": {
                     "pedido_id": {
                         "S": "{% 'Pedido#' & $states.input.orderId %}"
                     },
                     "entity": {
+                        "S": "METADATA"
+                    }
+                },
+                "UpdateExpression": "SET #status = :status, #desc = :desc, #date = :date, #attrs = :attrs, #hist = list_append(if_not_exists(#hist, :empty), :newHist)",
+                "ExpressionAttributeNames": {
+                    "#status": "Estado",
+                    "#desc": "DesEstado",
+                    "#date": "estadoFecha",
+                    "#attrs": "atributos",
+                    "#hist": "Historial"
+                },
+                "ExpressionAttributeValues": {
+                    ":status": {
                         "S": "EnPreparacion"
                     },
-                    "sucursal": {
-                        "S": "{% $states.input.sucursalId %}"
-                    },
-                    "estadoFecha": {
-                        "S": "{% 'EnPreparacion#' & $now() %}"
-                    },
-                    "Cliente": {
-                        "S": "{% $states.input.customerId %}"
-                    },
-                    "Estado": {
-                        "S": "EnPreparacion"
-                    },
-                    "DesEstado": {
+                    ":desc": {
                         "S": "Pedido en preparación"
                     },
-                    "Historial": {
+                    ":date": {
+                        "S": "{% 'EnPreparacion#' & $now() %}"
+                    },
+                    ":attrs": {
+                        "S": "{% $string({'Asignado': $states.input.cocinero.userId, 'cocineroNombre': $states.input.cocinero.nombre}) %}"
+                    },
+                    ":empty": {
+                        "L": []
+                    },
+                    ":newHist": {
                         "L": [
                             {
                                 "M": {
@@ -108,12 +128,10 @@
                                 }
                             }
                         ]
-                    },
-                    "atributos": {
-                        "S": "{% $string({'Asignado': $states.input.cocinero.userId, 'cocineroNombre': $states.input.cocinero.nombre}) %}"
                     }
                 }
             },
+            "Output": "{% $states.input %}",
             "Next": "PublicarEventoPreparacion"
         },
         "PublicarEventoPreparacion": {
@@ -193,7 +211,7 @@
                                                 "timestamp": "{% $now() %}"
                                             }
                                         },
-                                        "EventBusName": "${EventBusName}"
+                                        "EventBusName": "${self:custom.EventBusName}"
                                     }
                                 ]
                             },
@@ -209,10 +227,10 @@
             "Comment": "Busca despachador usando GSI",
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
             "Arguments": {
-                "TableName": "${UsuariosTableName}",
+                "TableName": "${self:custom.UsuariosTableName}",
                 "IndexName": "TenantRoleIndex",
                 "KeyConditionExpression": "tenant_context = :tenantContext AND #role = :role",
-                "FilterExpression": "attribute_exists(atributos) AND contains(atributos, :activo)",
+                "FilterExpression": "contains(atributos, :act1) OR contains(atributos, :act2)",
                 "ExpressionAttributeNames": {
                     "#role": "Role"
                 },
@@ -223,13 +241,16 @@
                     ":role": {
                         "S": "DESPACHADOR"
                     },
-                    ":activo": {
+                    ":act1": {
                         "S": "\"activo\":true"
+                    },
+                    ":act2": {
+                        "S": "\"activo\": true"
                     }
                 },
                 "Limit": 1
             },
-            "Output": "{% $states.input.detail ? {'orderId': $states.input.detail.orderId, 'sucursalId': $states.input.detail.sucursalId, 'customerId': $states.input.detail.customerId, 'customerEmail': $states.input.detail.customerEmail, 'correlationId': $states.input.detail.correlationId ? $states.input.detail.correlationId : $uuid(), 'cocineroId': $states.input.detail.cocineroId, 'despachador': $states.result.Items[0] ? {'userId': $states.result.Items[0].user_id.S, 'nombre': $eval($states.result.Items[0].atributos.S).nombre} : null} : {'despachador': null} %}",
+            "Output": "{% ($selected := $states.result.Items[0]; $rawName := $selected ? $split($split($selected.atributos.S, '\"nombre\": \"')[1], '\"')[0] : 'Despachador'; $states.input.detail ? {'orderId': $states.input.detail.orderId, 'sucursalId': $states.input.detail.sucursalId, 'customerId': $states.input.detail.customerId, 'customerEmail': $states.input.detail.customerEmail, 'correlationId': $states.input.detail.correlationId ? $states.input.detail.correlationId : $uuid(), 'cocineroId': $states.input.detail.cocineroId, 'despachador': $selected ? {'userId': $selected.user_id.S, 'nombre': $rawName} : null} : {'despachador': null}) %}",
             "Next": "ValidarDespachadorEncontrado"
         },
         "ValidarDespachadorEncontrado": {
@@ -244,33 +265,43 @@
         },
         "AsignarDespachadorAlPedido": {
             "Type": "Task",
-            "Comment": "Crea registro con entity=EnDespacho",
-            "Resource": "arn:aws:states:::dynamodb:putItem",
+            "Comment": "Actualiza el pedido: Agrega al historial y actualiza estado",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
             "Arguments": {
-                "TableName": "${PedidosTableName}",
-                "Item": {
+                "TableName": "${self:custom.PedidosTableName}",
+                "Key": {
                     "pedido_id": {
                         "S": "{% 'Pedido#' & $states.input.orderId %}"
                     },
                     "entity": {
+                        "S": "METADATA"
+                    }
+                },
+                "UpdateExpression": "SET #status = :status, #desc = :desc, #date = :date, #attrs = :attrs, #hist = list_append(if_not_exists(#hist, :empty), :newHist)",
+                "ExpressionAttributeNames": {
+                    "#status": "Estado",
+                    "#desc": "DesEstado",
+                    "#date": "estadoFecha",
+                    "#attrs": "atributos",
+                    "#hist": "Historial"
+                },
+                "ExpressionAttributeValues": {
+                    ":status": {
                         "S": "EnDespacho"
                     },
-                    "sucursal": {
-                        "S": "{% $states.input.sucursalId %}"
-                    },
-                    "estadoFecha": {
-                        "S": "{% 'EnDespacho#' & $now() %}"
-                    },
-                    "Cliente": {
-                        "S": "{% $states.input.customerId %}"
-                    },
-                    "Estado": {
-                        "S": "EnDespacho"
-                    },
-                    "DesEstado": {
+                    ":desc": {
                         "S": "Pedido siendo empacado"
                     },
-                    "Historial": {
+                    ":date": {
+                        "S": "{% 'EnDespacho#' & $now() %}"
+                    },
+                    ":attrs": {
+                        "S": "{% $string({'Asignado': $states.input.despachador.userId, 'despachadorNombre': $states.input.despachador.nombre, 'cocineroId': $states.input.cocineroId}) %}"
+                    },
+                    ":empty": {
+                        "L": []
+                    },
+                    ":newHist": {
                         "L": [
                             {
                                 "M": {
@@ -286,12 +317,10 @@
                                 }
                             }
                         ]
-                    },
-                    "atributos": {
-                        "S": "{% $string({'Asignado': $states.input.despachador.userId, 'despachadorNombre': $states.input.despachador.nombre, 'cocineroId': $states.input.cocineroId}) %}"
                     }
                 }
             },
+            "Output": "{% $states.input %}",
             "Next": "PublicarEventoDespacho"
         },
         "PublicarEventoDespacho": {
@@ -369,7 +398,7 @@
                                                 "timestamp": "{% $now() %}"
                                             }
                                         },
-                                        "EventBusName": "${EventBusName}"
+                                        "EventBusName": "${self:custom.EventBusName}"
                                     }
                                 ]
                             },
@@ -385,10 +414,10 @@
             "Comment": "Busca repartidor usando GSI",
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:query",
             "Arguments": {
-                "TableName": "${UsuariosTableName}",
+                "TableName": "${self:custom.UsuariosTableName}",
                 "IndexName": "TenantRoleIndex",
                 "KeyConditionExpression": "tenant_context = :tenantContext AND #role = :role",
-                "FilterExpression": "attribute_exists(atributos) AND contains(atributos, :activo)",
+                "FilterExpression": "contains(atributos, :act1) OR contains(atributos, :act2)",
                 "ExpressionAttributeNames": {
                     "#role": "Role"
                 },
@@ -399,13 +428,16 @@
                     ":role": {
                         "S": "REPARTIDOR"
                     },
-                    ":activo": {
+                    ":act1": {
                         "S": "\"activo\":true"
+                    },
+                    ":act2": {
+                        "S": "\"activo\": true"
                     }
                 },
                 "Limit": 1
             },
-            "Output": "{% $states.input.detail ? {'orderId': $states.input.detail.orderId, 'sucursalId': $states.input.detail.sucursalId, 'customerId': $states.input.detail.customerId, 'customerEmail': $states.input.detail.customerEmail, 'correlationId': $states.input.detail.correlationId ? $states.input.detail.correlationId : $uuid(), 'despachadorId': $states.input.detail.despachadorId, 'repartidor': $states.result.Items[0] ? {'userId': $states.result.Items[0].user_id.S, 'nombre': $eval($states.result.Items[0].atributos.S).nombre} : null} : {'repartidor': null} %}",
+            "Output": "{% ($selected := $states.result.Items[0]; $rawName := $selected ? $split($split($selected.atributos.S, '\"nombre\": \"')[1], '\"')[0] : 'Repartidor'; $states.input.detail ? {'orderId': $states.input.detail.orderId, 'sucursalId': $states.input.detail.sucursalId, 'customerId': $states.input.detail.customerId, 'customerEmail': $states.input.detail.customerEmail, 'correlationId': $states.input.detail.correlationId ? $states.input.detail.correlationId : $uuid(), 'despachadorId': $states.input.detail.despachadorId, 'repartidor': $selected ? {'userId': $selected.user_id.S, 'nombre': $rawName} : null} : {'repartidor': null}) %}",
             "Next": "ValidarRepartidorEncontrado"
         },
         "ValidarRepartidorEncontrado": {
@@ -420,33 +452,43 @@
         },
         "AsignarRepartidorAlPedido": {
             "Type": "Task",
-            "Comment": "Crea registro con entity=EnCamino",
-            "Resource": "arn:aws:states:::dynamodb:putItem",
+            "Comment": "Actualiza el pedido: Agrega al historial y actualiza estado",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
             "Arguments": {
-                "TableName": "${PedidosTableName}",
-                "Item": {
+                "TableName": "${self:custom.PedidosTableName}",
+                "Key": {
                     "pedido_id": {
                         "S": "{% 'Pedido#' & $states.input.orderId %}"
                     },
                     "entity": {
+                        "S": "METADATA"
+                    }
+                },
+                "UpdateExpression": "SET #status = :status, #desc = :desc, #date = :date, #attrs = :attrs, #hist = list_append(if_not_exists(#hist, :empty), :newHist)",
+                "ExpressionAttributeNames": {
+                    "#status": "Estado",
+                    "#desc": "DesEstado",
+                    "#date": "estadoFecha",
+                    "#attrs": "atributos",
+                    "#hist": "Historial"
+                },
+                "ExpressionAttributeValues": {
+                    ":status": {
                         "S": "EnCamino"
                     },
-                    "sucursal": {
-                        "S": "{% $states.input.sucursalId %}"
-                    },
-                    "estadoFecha": {
-                        "S": "{% 'EnCamino#' & $now() %}"
-                    },
-                    "Cliente": {
-                        "S": "{% $states.input.customerId %}"
-                    },
-                    "Estado": {
-                        "S": "EnCamino"
-                    },
-                    "DesEstado": {
+                    ":desc": {
                         "S": "Pedido en camino"
                     },
-                    "Historial": {
+                    ":date": {
+                        "S": "{% 'EnCamino#' & $now() %}"
+                    },
+                    ":attrs": {
+                        "S": "{% $string({'Asignado': $states.input.repartidor.userId, 'repartidorNombre': $states.input.repartidor.nombre, 'despachadorId': $states.input.despachadorId}) %}"
+                    },
+                    ":empty": {
+                        "L": []
+                    },
+                    ":newHist": {
                         "L": [
                             {
                                 "M": {
@@ -462,12 +504,10 @@
                                 }
                             }
                         ]
-                    },
-                    "atributos": {
-                        "S": "{% $string({'Asignado': $states.input.repartidor.userId, 'repartidorNombre': $states.input.repartidor.nombre, 'despachadorId': $states.input.despachadorId}) %}"
                     }
                 }
             },
+            "Output": "{% $states.input %}",
             "Next": "PublicarEventoEnCamino"
         },
         "PublicarEventoEnCamino": {
@@ -546,7 +586,7 @@
                                                 "redirectUrl": "{% '/order/' & $states.input.orderId & '/track' %}"
                                             }
                                         },
-                                        "EventBusName": "${EventBusName}"
+                                        "EventBusName": "${self:custom.EventBusName}"
                                     }
                                 ]
                             },
@@ -559,33 +599,43 @@
         },
         "ActualizarPedidoEntregado": {
             "Type": "Task",
-            "Comment": "Crea registro con entity=Entregado",
-            "Resource": "arn:aws:states:::dynamodb:putItem",
+            "Comment": "Actualiza el pedido: Agrega al historial y actualiza estado",
+            "Resource": "arn:aws:states:::dynamodb:updateItem",
             "Arguments": {
-                "TableName": "${PedidosTableName}",
-                "Item": {
+                "TableName": "${self:custom.PedidosTableName}",
+                "Key": {
                     "pedido_id": {
                         "S": "{% 'Pedido#' & $states.input.detail.orderId %}"
                     },
                     "entity": {
+                        "S": "METADATA"
+                    }
+                },
+                "UpdateExpression": "SET #status = :status, #desc = :desc, #date = :date, #attrs = :attrs, #hist = list_append(if_not_exists(#hist, :empty), :newHist)",
+                "ExpressionAttributeNames": {
+                    "#status": "Estado",
+                    "#desc": "DesEstado",
+                    "#date": "estadoFecha",
+                    "#attrs": "atributos",
+                    "#hist": "Historial"
+                },
+                "ExpressionAttributeValues": {
+                    ":status": {
                         "S": "Entregado"
                     },
-                    "sucursal": {
-                        "S": "{% $states.input.detail.sucursalId %}"
-                    },
-                    "estadoFecha": {
-                        "S": "{% 'Entregado#' & $now() %}"
-                    },
-                    "Cliente": {
-                        "S": "{% $states.input.detail.customerId %}"
-                    },
-                    "Estado": {
-                        "S": "Entregado"
-                    },
-                    "DesEstado": {
+                    ":desc": {
                         "S": "Pedido entregado"
                     },
-                    "Historial": {
+                    ":date": {
+                        "S": "{% 'Entregado#' & $now() %}"
+                    },
+                    ":attrs": {
+                        "S": "{% $string({'confirmationCode': $states.input.detail.confirmationCode, 'deliveryTimestamp': $states.input.detail.deliveryTimestamp}) %}"
+                    },
+                    ":empty": {
+                        "L": []
+                    },
+                    ":newHist": {
                         "L": [
                             {
                                 "M": {
@@ -601,9 +651,6 @@
                                 }
                             }
                         ]
-                    },
-                    "atributos": {
-                        "S": "{% $string({'confirmationCode': $states.input.detail.confirmationCode, 'deliveryTimestamp': $states.input.detail.deliveryTimestamp}) %}"
                     }
                 }
             },
@@ -685,7 +732,7 @@
                                                 "redirectUrl": "{% '/order/' & $states.input.orderId & '/review' %}"
                                             }
                                         },
-                                        "EventBusName": "${EventBusName}"
+                                        "EventBusName": "${self:custom.EventBusName}"
                                     }
                                 ]
                             },

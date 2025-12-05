@@ -22,6 +22,7 @@ STAGE="${STAGE:-dev}"
 SUCURSAL="${SUCURSAL:-sucursal-001}"
 CUSTOMER_ID="${CUSTOMER_ID:-USER#customer-test-001}"
 EMAIL="${EMAIL:-test@chinawok.com}"
+ORDER_ID="${ORDER_ID:-ORD-TEST-$(date +%s)}"
 
 # =========================================================================
 # FUNCIONES AUXILIARES
@@ -57,6 +58,8 @@ publish_event() {
   
   local EVENT_BUS=$(get_event_bus_name)
   echo -e "${BLUE}  Event Bus: ${EVENT_BUS}${NC}"
+
+  local clean_payload=$(echo "$event_payload" | jq -c '.')
   
   # Crear el JSON del evento con formato correcto
   local entries=$(cat <<EOF
@@ -64,7 +67,7 @@ publish_event() {
   {
     "Source": "${source}",
     "DetailType": "${detail_type}",
-    "Detail": ${event_payload},
+    "Detail": $(echo "$clean_payload" | jq -R .),
     "EventBusName": "${EVENT_BUS}"
   }
 ]
@@ -160,11 +163,10 @@ fi
 log_test "PagoConfirmado → EnPreparación"
 
 CORRELATION_ID="test-$(date +%s%N)"
-ORDER_ID_1="ORD-TEST-$(date +%s)"
 
 EVENTO_PAGO=$(cat <<EOF
 {
-  "orderId": "${ORDER_ID_1}",
+  "orderId": "${ORDER_ID}",
   "sucursalId": "${SUCURSAL}",
   "customerId": "${CUSTOMER_ID}",
   "customerEmail": "${EMAIL}",
