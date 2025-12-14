@@ -88,6 +88,19 @@ stepFunctions:
               detail:
                 meta:
                   role: ["ADMIN"]
+                  
+        - eventBridge:
+            eventBusName: ${self:provider.environment.EVENT_BUS_NAME}
+            iamRole: ${self:custom.common.provider.iam.role}
+            event:
+              source: ["app.websocket.inbound"]
+              detail-type:
+                - "Profile.Obtener"
+                - "Profile.Editar"
+              detail:
+                meta:
+                  # Solo permite pasar si el rol es uno de estos 3:
+                  role: ["CLIENTE", "ADMIN", "MANAGER"]
 
 # RECURSOS ADICIONALES
 resources:
@@ -141,6 +154,41 @@ resources:
                       "variant": "ERROR",
                       "message": "⛔ Acceso Denegado. Rol <userRole> insuficiente."
                     },
+                    "data": {}
+                  }
+                }
+        
+    # -----------------------------------------------------------
+    # REGLA 2: DENEGAR PERFIL (SI NO ES CLIENTE, ADMIN O MANAGER)
+    # -----------------------------------------------------------
+    RuleProfileAccessDenied:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: RuleProfileAccessDenied-${self:provider.stage}
+        EventBusName: ${self:custom.EventBusName}
+        EventPattern:
+          source: ["app.websocket.inbound"]
+          detail-type: ["Profile.Obtener", "Profile.Editar"]
+          detail:
+            meta:
+              role: 
+                # "anything-but" acepta array: Bloquea todo lo que NO esté en esta lista
+                - "anything-but": ["CLIENTE", "ADMIN", "MANAGER"]
+        Targets:
+          - Id: RelayToBus
+            Arn: ${self:custom.common.provider.environment.UNIVERSAL_RELAY_ARN}
+            InputTransformer:
+              InputPathsMap:
+                connId: "$.detail.meta.connectionId"
+                reqId: "$.detail.meta.correlationId"
+                userRole: "$.detail.meta.role"
+              InputTemplate: |
+                {
+                  "Source": "app.security",
+                  "DetailType": "Security.AccessDenied",
+                  "Detail": {
+                    "meta": { "scope": "NOTIFICATION", "targetType": "CONNECTION", "targetId": <connId>, "correlationId": <reqId> },
+                    "ui": { "action": "SHOW_TOAST", "variant": "ERROR", "message": "⛔ No tienes permisos para editar perfiles (Rol: <userRole>)." },
                     "data": {}
                   }
                 }

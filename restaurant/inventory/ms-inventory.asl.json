@@ -28,10 +28,6 @@
                     "Next": "Verificar y Reservar Stock"
                 },
                 {
-                    "Condition": "{% $eventType = 'Pago.Confirmado' %}",
-                    "Next": "State: Pedido en Preparacion"
-                },
-                {
                     "Condition": "{% $eventType = 'Pago.Fallido' %}",
                     "Next": "Revertir Reserva (Rollback)"
                 },
@@ -44,7 +40,7 @@
         "Revertir Reserva (Rollback)": {
             "Type": "Task",
             "Arguments": {
-                "TransactItems": "{% $inputData.items ~> $map(function($item) { { \"Update\": { \"TableName\": \"$tableName\", \"Key\": { \"pk\": { \"S\": $item.tenantId }, \"sk\": { \"S\": $item.productSku } }, \"UpdateExpression\": \"SET stock = stock + :qty\", \"ExpressionAttributeValues\": { \":qty\": { \"N\": $string($item.qty) } } } } }) %}"
+                "TransactItems": "{% $inputData.items ~> $map(function($item) { { \"Update\": { \"TableName\": $tableName, \"Key\": { \"pk\": { \"S\": $item.tenantId }, \"sk\": { \"S\": $item.productSku } }, \"UpdateExpression\": \"SET stock = stock + :qty\", \"ExpressionAttributeValues\": { \":qty\": { \"N\": $string($item.qty) } } } } }) %}"
             },
             "Comment": "Suma el stock de vuelta a todos los items.",
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:transactWriteItems",
@@ -103,7 +99,7 @@
             "Resource": "arn:aws:states:::aws-sdk:dynamodb:transactWriteItems",
             "Comment": "Resta stock de TODOS los items. Si uno no tiene stock, falla todo.",
             "Arguments": {
-                "TransactItems": "{% $inputData.items ~> $map(function($item) { { \"Update\": { \"TableName\": \"$tableName\", \"Key\": { \"pk\": { \"S\": $item.tenantId }, \"sk\": { \"S\": $item.productSku } }, \"UpdateExpression\": \"SET stock = stock - :qty\", \"ConditionExpression\": \"stock >= :qty\", \"ExpressionAttributeValues\": { \":qty\": { \"N\": $string($item.qty) } } } } }) %}"
+                "TransactItems": "{% $inputData.items ~> $map(function($item) { { \"Update\": { \"TableName\": $tableName, \"Key\": { \"pk\": { \"S\": $item.tenantId }, \"sk\": { \"S\": $item.productSku } }, \"UpdateExpression\": \"SET stock = stock - :qty\", \"ConditionExpression\": \"stock >= :qty\", \"ExpressionAttributeValues\": { \":qty\": { \"N\": $string($item.qty) } } } } }) %}"
             },
             "Next": "Responder a MS Pedidos: Éxito",
             "Catch": [
@@ -133,21 +129,6 @@
                 "Output": "{% $string({\n          \"status\": \"SIN_STOCK\",\n          \"reason\": \"Stock insuficiente para uno o más productos\",\n          \"details\": $states.input.Cause\n        }) %}"
             },
             "Resource": "arn:aws:states:::aws-sdk:sfn:sendTaskSuccess",
-            "End": true
-        },
-        "State: Pedido en Preparacion": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::events:putEvents",
-            "Arguments": {
-                "Entries": [
-                    {
-                        "Source": "app.inventory",
-                        "DetailType": "Pedido.EnPreparacion",
-                        "EventBusName": "{% $busName %}",
-                        "Detail": "{% $string({\n            \"meta\": $meta,\n            \"data\": { \n              \"orderId\": $inputData.orderId,\n              \"items\": $inputData.items,\n              \"email\": $inputData.email\n            }\n}) %}"
-                    }
-                ]
-            },
             "End": true
         },
         "Notificar: Pedido Cancelado": {

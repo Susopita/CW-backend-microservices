@@ -1,5 +1,6 @@
 {
-    "Comment": "Flujo de trabajo para Microservicio de Pagos y Facturacion",
+    "Comment": "Microservicio Pagos - SAGA Participant (Producción)",
+    "QueryLanguage": "JSONata",
     "StartAt": "Preparar Contexto",
     "States": {
         "Preparar Contexto": {
@@ -35,13 +36,14 @@
         },
         "Validar Datos de Entrada": {
             "Type": "Pass",
+            "Comment": "Validación estructural básica antes de invocar lambdas",
             "Next": "Tiene RUC?"
         },
         "Tiene RUC?": {
             "Type": "Choice",
             "Choices": [
                 {
-                    "Condition": "{% $exists($states.input.ruc) %}",
+                    "Condition": "{% $exists($inputData.ruc) %}",
                     "Next": "Validar RUC (Sunat/Api)"
                 }
             ],
@@ -50,11 +52,63 @@
         "Validar RUC (Sunat/Api)": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
+            "Comment": "Consulta API externa (ej. Sunat/Padron) para ver estado del contribuyente",
             "Arguments": {
-                "FunctionName": "",
-                "ruc": "{% $states.input.ruc %}"
+                "FunctionName": "${ValidateRucFunctionArn}",
+                "Payload": {
+                    "ruc": "{% $inputData.ruc %}"
+                }
             },
-            "Output": "{% $merge([$states.input, { 'rucValido': $states.result.valido }]) %}",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.5
+                }
+            ],
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "Next": "SAGA: Reportar Fallo (RUC)"
+                }
+            ],
+            "Assign": {
+                "rucValido": "{% $states.result.Payload.valido %}"
+            },
+            "Next": "Verificar RUC Valido"
+        },
+        "Verificar RUC Valido": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Condition": "{% $rucValido = true %}",
+                    "Next": "Analisis de Riesgo (Anti-Fraude)"
+                }
+            ],
+            "Default": "SAGA: Reportar Fallo (RUC)"
+        },
+        "Analisis de Riesgo (Anti-Fraude)": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Comment": "Evalúa riesgo basado en monto, usuario y comportamiento",
+            "Arguments": {
+                "FunctionName": "${FraudDetectionFunctionArn}",
+                "Payload": {
+                    "userId": "{% $meta.userId %}",
+                    "amount": "{% $inputData.amount %}",
+                    "userIp": "{% $meta.ipAddress %}",
+                    "deviceId": "{% $meta.deviceId %}",
+                    "email": "{% $meta.email %}"
+                }
+            },
+            "Assign": {
+                "riskScore": "{% $states.result.Payload.score %}",
+                "riskReason": "{% $states.result.Payload.reason %}"
+            },
             "Retry": [
                 {
                     "ErrorEquals": [
@@ -68,29 +122,19 @@
                     "ErrorEquals": [
                         "States.ALL"
                     ],
-                    "Next": "Notificar: Error RUC"
+                    "Comment": "Si falla el detector, asumimos riesgo alto por seguridad o continuamos con warning",
+                    "Next": "SAGA: Reportar Fallo (Tecnico)"
                 }
             ],
-            "Next": "Analisis de Riesgo (Anti-Fraude)"
-        },
-        "Analisis de Riesgo (Anti-Fraude)": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::lambda:invoke",
-            "Arguments": {
-                "FunctionName": "",
-                "userId": "{% $states.input.userId %}",
-                "amount": "{% $states.input.amount %}",
-                "ip": "{% $states.input.ip %}"
-            },
-            "Output": "{% $merge([$states.input, { 'riskScore': $states.result.score }]) %}",
             "Next": "Evaluacion de Riesgo"
         },
         "Evaluacion de Riesgo": {
             "Type": "Choice",
+            "Comment": "Score 0-100. >80 es bloqueo inmediato.",
             "Choices": [
                 {
-                    "Condition": "{% $states.input.riskScore > 80 %}",
-                    "Next": "Notificar: Pago Rechazado (Fraude)"
+                    "Condition": "{% $riskScore > 80 %}",
+                    "Next": "SAGA: Reportar Fallo (Fraude)"
                 }
             ],
             "Default": "Ejecutar Pasarela de Pago"
@@ -98,26 +142,33 @@
         "Ejecutar Pasarela de Pago": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
+            "Comment": "Invoca a la Lambda que conecta con Stripe/Visa/Niubiz",
             "Arguments": {
-                "FunctionName": "",
-                "amount": "{% $states.input.amount %}",
-                "token": "{% $states.input.paymentToken %}",
-                "orderId": "{% $states.input.orderId %}"
+                "FunctionName": "${ProcessPaymentFunctionArn}",
+                "Payload": {
+                    "amount": "{% $inputData.amount %}",
+                    "token": "{% $inputData.paymentToken %}",
+                    "orderId": "{% $inputData.orderId %}",
+                    "email": "{% $meta.email %}"
+                }
             },
-            "Output": "{% $merge([$states.input, { 'paymentResult': $states.result }]) %}",
+            "Assign": {
+                "paymentResult": "{% $states.result.Payload %}"
+            },
             "Catch": [
                 {
                     "ErrorEquals": [
                         "PaymentRejected",
-                        "InsufficientFunds"
+                        "InsufficientFunds",
+                        "CardExpired"
                     ],
-                    "Next": "Notificar: Pago Rechazado (Banco)"
+                    "Next": "SAGA: Reportar Fallo (Banco)"
                 },
                 {
                     "ErrorEquals": [
                         "States.ALL"
                     ],
-                    "Next": "Notificar: Error Tecnico"
+                    "Next": "SAGA: Reportar Fallo (Tecnico)"
                 }
             ],
             "Next": "Registrar Transaccion Exitosa"
@@ -126,7 +177,7 @@
             "Type": "Task",
             "Resource": "arn:aws:states:::dynamodb:putItem",
             "Arguments": {
-                "TableName": "DB_Transacciones",
+                "TableName": "{% $txTable %}",
                 "Item": {
                     "pk": {
                         "S": "{% 'TX#' & $uuid() %}"
@@ -135,29 +186,41 @@
                         "S": "METADATA"
                     },
                     "orderId": {
-                        "S": "{% $states.input.orderId %}"
+                        "S": "{% $inputData.orderId %}"
                     },
                     "userId": {
-                        "S": "{% $states.input.userId %}"
+                        "S": "{% $meta.userId %}"
                     },
                     "amount": {
-                        "N": "{% $string($states.input.amount) %}"
+                        "N": "{% $string($inputData.amount) %}"
                     },
                     "status": {
                         "S": "COMPLETED"
                     },
                     "gatewayId": {
-                        "S": "{% $states.input.paymentResult.transactionId %}"
+                        "S": "{% $paymentResult.transactionId %}"
                     },
                     "timestamp": {
                         "S": "{% $now() %}"
                     },
                     "invoiceType": {
-                        "S": "{% $exists($states.input.ruc) ? 'FACTURA' : 'BOLETA' %}"
+                        "S": "{% $exists($inputData.ruc) ? 'FACTURA' : 'BOLETA' %}"
+                    },
+                    "riskScore": {
+                        "N": "{% $string($riskScore) %}"
                     }
                 }
             },
-            "Output": "{% $states.input %}",
+            "Next": "SAGA: Confirmar al Orquestador"
+        },
+        "SAGA: Confirmar al Orquestador": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:sfn:sendTaskSuccess",
+            "Comment": "AVISA A ORDER-MS QUE EL PAGO PASO. ESTO DESBLOQUEA EL PEDIDO.",
+            "Arguments": {
+                "TaskToken": "{% $tokenOrquestador %}",
+                "Output": "{% $string({ 'status': 'PAID', 'txId': $paymentResult.transactionId }) %}"
+            },
             "Next": "Paralelo: Notificar y Facturar"
         },
         "Paralelo: Notificar y Facturar": {
@@ -174,23 +237,8 @@
                                     {
                                         "Source": "app.payments",
                                         "DetailType": "Payment.Success",
-                                        "Detail": {
-                                            "meta": {
-                                                "scope": "NOTIFICATION",
-                                                "targetType": "USER",
-                                                "targetId": "{% $states.input.userId %}"
-                                            },
-                                            "ui": {
-                                                "action": "REDIRECT",
-                                                "target": "/order/confirmed",
-                                                "variant": "SUCCESS",
-                                                "message": "Pago procesado correctamente"
-                                            },
-                                            "data": {
-                                                "orderId": "{% $states.input.orderId %}",
-                                                "txId": "{% $states.input.paymentResult.transactionId %}"
-                                            }
-                                        }
+                                        "EventBusName": "{% $busName %}",
+                                        "Detail": "{% $string({ \"meta\": $merge([$meta, { \"scope\": \"NOTIFICATION\", \"targetType\": \"USER\", \"targetId\": $meta.userId }]), \"ui\": { \"action\": \"SHOW_TOAST\", \"variant\": \"SUCCESS\", \"message\": \"Pago procesado correctamente\" }, \"data\": { \"orderId\": $inputData.orderId, \"txId\": $paymentResult.transactionId } }) %}"
                                     }
                                 ]
                             },
@@ -205,7 +253,7 @@
                             "Type": "Choice",
                             "Choices": [
                                 {
-                                    "Condition": "{% $exists($states.input.ruc) %}",
+                                    "Condition": "{% $exists($inputData.ruc) %}",
                                     "Next": "Emitir Comprobante"
                                 }
                             ],
@@ -218,16 +266,14 @@
                         "Emitir Comprobante": {
                             "Type": "Task",
                             "Resource": "arn:aws:states:::events:putEvents",
+                            "Comment": "Emite evento para que el modulo de facturacion electronica lo tome",
                             "Arguments": {
                                 "Entries": [
                                     {
                                         "Source": "app.payments",
                                         "DetailType": "Billing.GenerateInvoice",
-                                        "Detail": {
-                                            "ruc": "{% $states.input.ruc %}",
-                                            "amount": "{% $states.input.amount %}",
-                                            "orderId": "{% $states.input.orderId %}"
-                                        }
+                                        "EventBusName": "{% $busName %}",
+                                        "Detail": "{% $string({ \"ruc\": $inputData.ruc, \"amount\": $inputData.amount, \"orderId\": $inputData.orderId }) %}"
                                     }
                                 ]
                             },
@@ -238,7 +284,50 @@
             ],
             "End": true
         },
-        "Notificar: Error RUC": {
+        "SAGA: Reportar Fallo (RUC)": {
+            "Type": "Pass",
+            "Assign": {
+                "failError": "INVALID_RUC",
+                "failCause": "RUC Invalido o Error de Validacion"
+            },
+            "Next": "SAGA: Notificar Fallo"
+        },
+        "SAGA: Reportar Fallo (Fraude)": {
+            "Type": "Pass",
+            "Assign": {
+                "failError": "HIGH_RISK",
+                "failCause": "Transaccion rechazada por sistema de seguridad"
+            },
+            "Next": "SAGA: Notificar Fallo"
+        },
+        "SAGA: Reportar Fallo (Banco)": {
+            "Type": "Pass",
+            "Assign": {
+                "failError": "PAGO_RECHAZADO",
+                "failCause": "Tarjeta rechazada por la pasarela"
+            },
+            "Next": "SAGA: Notificar Fallo"
+        },
+        "SAGA: Reportar Fallo (Tecnico)": {
+            "Type": "Pass",
+            "Assign": {
+                "failError": "SYSTEM_ERROR",
+                "failCause": "Error interno del sistema de pagos"
+            },
+            "Next": "SAGA: Notificar Fallo"
+        },
+        "SAGA: Notificar Fallo": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:sfn:sendTaskFailure",
+            "Comment": "AVISA A ORDER-MS QUE EL PAGO FALLO. ESTO INICIA EL ROLLBACK DE INVENTARIO.",
+            "Arguments": {
+                "TaskToken": "{% $tokenOrquestador %}",
+                "Error": "{% $failError %}",
+                "Cause": "{% $failCause %}"
+            },
+            "Next": "Notificar Usuario: Error"
+        },
+        "Notificar Usuario: Error": {
             "Type": "Task",
             "Resource": "arn:aws:states:::events:putEvents",
             "Arguments": {
@@ -246,105 +335,8 @@
                     {
                         "Source": "app.payments",
                         "DetailType": "Payment.Failed",
-                        "Detail": {
-                            "meta": {
-                                "scope": "NOTIFICATION",
-                                "targetType": "USER",
-                                "targetId": "{% $states.input.userId %}"
-                            },
-                            "ui": {
-                                "action": "SHOW_TOAST",
-                                "variant": "ERROR",
-                                "message": "RUC Inválido"
-                            },
-                            "data": {
-                                "reason": "INVALID_RUC"
-                            }
-                        }
-                    }
-                ]
-            },
-            "End": true
-        },
-        "Notificar: Pago Rechazado (Fraude)": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::events:putEvents",
-            "Arguments": {
-                "Entries": [
-                    {
-                        "Source": "app.payments",
-                        "DetailType": "Payment.Failed",
-                        "Detail": {
-                            "meta": {
-                                "scope": "NOTIFICATION",
-                                "targetType": "USER",
-                                "targetId": "{% $states.input.userId %}"
-                            },
-                            "ui": {
-                                "action": "SHOW_TOAST",
-                                "variant": "ERROR",
-                                "message": "Pago rechazado por seguridad"
-                            },
-                            "data": {
-                                "reason": "HIGH_RISK"
-                            }
-                        }
-                    }
-                ]
-            },
-            "End": true
-        },
-        "Notificar: Pago Rechazado (Banco)": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::events:putEvents",
-            "Arguments": {
-                "Entries": [
-                    {
-                        "Source": "app.payments",
-                        "DetailType": "Payment.Failed",
-                        "Detail": {
-                            "meta": {
-                                "scope": "NOTIFICATION",
-                                "targetType": "USER",
-                                "targetId": "{% $states.input.userId %}"
-                            },
-                            "ui": {
-                                "action": "SHOW_TOAST",
-                                "variant": "ERROR",
-                                "message": "Tarjeta rechazada"
-                            },
-                            "data": {
-                                "reason": "BANK_DECLINE"
-                            }
-                        }
-                    }
-                ]
-            },
-            "End": true
-        },
-        "Notificar: Error Tecnico": {
-            "Type": "Task",
-            "Resource": "arn:aws:states:::events:putEvents",
-            "Arguments": {
-                "Entries": [
-                    {
-                        "Source": "app.payments",
-                        "DetailType": "Payment.Error",
-                        "Detail": {
-                            "meta": {
-                                "scope": "NOTIFICATION",
-                                "targetType": "USER",
-                                "targetId": "{% $states.input.userId %}"
-                            },
-                            "ui": {
-                                "action": "SHOW_TOAST",
-                                "variant": "WARNING",
-                                "message": "Error de conexión"
-                            },
-                            "data": {
-                                "reason": "SYSTEM_ERROR"
-                            }
-                        }
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({ \"meta\": $merge([$meta, { \"scope\": \"NOTIFICATION\", \"targetType\": \"USER\", \"targetId\": $meta.userId }]), \"ui\": { \"action\": \"SHOW_TOAST\", \"variant\": \"ERROR\", \"message\": \"Pago rechazado: \" & $failCause }, \"data\": { \"reason\": $failError } }) %}"
                     }
                 ]
             },
@@ -354,36 +346,62 @@
             "Type": "Task",
             "Resource": "arn:aws:states:::dynamodb:getItem",
             "Arguments": {
-                "TableName": "DB_Transacciones",
+                "TableName": "{% $txTable %}",
                 "IndexName": "OrderIdIndex",
                 "Key": {
                     "orderId": {
-                        "S": "{% $states.input.detail.data.orderId %}"
+                        "S": "{% $inputData.orderId %}"
                     }
                 }
             },
-            "Output": "{% $merge([$states.input, { 'txItem': $states.result.Item }]) %}",
-            "Next": "Ejecutar Devolucion (Gateway)"
+            "Assign": {
+                "txItem": "{% $states.result.Item %}"
+            },
+            "Next": "Verificar Transaccion Existe"
+        },
+        "Verificar Transaccion Existe": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Condition": "{% $exists($txItem) %}",
+                    "Next": "Ejecutar Devolucion (Gateway)"
+                }
+            ],
+            "Default": "No Hay Nada Que Reembolsar"
+        },
+        "No Hay Nada Que Reembolsar": {
+            "Type": "Pass",
+            "End": true
         },
         "Ejecutar Devolucion (Gateway)": {
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
+            "Comment": "Usa el monto original de la TX si no se especifica uno parcial",
             "Arguments": {
-                "FunctionName": "",
-                "transactionId": "{% $states.input.txItem.gatewayId.S %}",
-                "amount": "{% $states.input.detail.data.refundAmount %}"
+                "FunctionName": "${ProcessRefundFunctionArn}",
+                "Payload": {
+                    "transactionId": "{% $txItem.gatewayId.S %}",
+                    "amount": "{% $inputData.refundAmount ? $inputData.refundAmount : $number($txItem.amount.N) %}"
+                }
             },
-            "Output": "{% $states.input %}",
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "MaxAttempts": 2
+                }
+            ],
             "Next": "Actualizar DB: Reembolsado"
         },
         "Actualizar DB: Reembolsado": {
             "Type": "Task",
             "Resource": "arn:aws:states:::dynamodb:updateItem",
             "Arguments": {
-                "TableName": "DB_Transacciones",
+                "TableName": "{% $txTable %}",
                 "Key": {
                     "pk": {
-                        "S": "{% $states.input.txItem.pk.S %}"
+                        "S": "{% $txItem.pk.S %}"
                     },
                     "sk": {
                         "S": "METADATA"
@@ -412,26 +430,12 @@
                     {
                         "Source": "app.payments",
                         "DetailType": "Payment.Refunded",
-                        "Detail": {
-                            "meta": {
-                                "scope": "NOTIFICATION",
-                                "targetType": "USER",
-                                "targetId": "{% $states.input.txItem.userId.S %}"
-                            },
-                            "ui": {
-                                "action": "SHOW_TOAST",
-                                "variant": "INFO",
-                                "message": "Reembolso procesado exitosamente"
-                            },
-                            "data": {
-                                "orderId": "{% $states.input.detail.data.orderId %}"
-                            }
-                        }
+                        "EventBusName": "{% $busName %}",
+                        "Detail": "{% $string({ \"meta\": $merge([$meta, { \"scope\": \"NOTIFICATION\", \"targetType\": \"USER\", \"targetId\": $txItem.userId.S }]), \"ui\": { \"action\": \"SHOW_TOAST\", \"variant\": \"INFO\", \"message\": \"Reembolso procesado exitosamente\" }, \"data\": { \"orderId\": $inputData.orderId } }) %}"
                     }
                 ]
             },
             "End": true
         }
-    },
-    "QueryLanguage": "JSONata"
+    }
 }

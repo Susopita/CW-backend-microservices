@@ -86,6 +86,11 @@ functions:
           route: Pedido.Historial
       - websocket:
           route: Pedido.Cancelar
+      - websocket:
+          route: Profile.Obtener
+      - websocket:
+          route: Profile.Editar
+
 resources:
   Resources:
     # ---------------------------------------------------

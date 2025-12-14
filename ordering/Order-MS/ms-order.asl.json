@@ -615,7 +615,7 @@
                         "Source": "app.orders",
                         "DetailType": "Pedido.Cancelado",
                         "EventBusName": "{% $busName %}",
-                        "Detail": "{% $string({ \"meta\": $meta, \"data\": { \"orderId\": $orderId, \"reason\": \"PaymentFailed\" } }) %}"
+                        "Detail": "{% $string({ \n  \"meta\": $meta, \n  \"data\": { \n    \"orderId\": $orderId, \n    \"reason\": \"PaymentFailed\", \n    \"items\": $cart.items.M ~> $each(function($v, $k) { { \n      \"productSku\": $v.M.sku.S, \n      \"qty\": $v.M.qty.N, \n      \"tenantId\": $inputData.sucursal \n    } } ) \n  } \n}) %}"
                     }
                 ]
             },
